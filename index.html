@@ -1,0 +1,99 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>WebGL Plot BLE Demo with Filters</title>
+    <style>
+        body, html {
+            margin: 0;
+            padding: 0;
+        }
+        #controls {
+            padding: 10px;
+            background-color: #f0f0f0;
+        }
+        #canvas-container {
+            position: relative;
+            width: 100%;
+            height: 500px; /* Adjust the height as needed */
+            background-color: black;
+        }
+        #canvas, #labelCanvas {
+            display: block;
+            width: 100%;
+            height: 100%;
+        }
+        #canvas {
+            z-index: 1;
+        }
+        #labelCanvas {
+            position: absolute;
+            top: 0;
+            left: 0;
+            pointer-events: none; /* Allow mouse events to pass through */
+            z-index: 2;
+        }
+        #scale-controls {
+            position: absolute;
+            top: 10px;
+            right: 10px;
+            z-index: 3;
+        }
+        #scale-controls button {
+            display: block;
+            margin-bottom: 5px;
+        }
+        .button {
+            margin-right: 10px;
+        }
+        .filter-options {
+            margin-top: 10px;
+        }
+        .filter-options label {
+            margin-right: 10px;
+        }
+        .filter-options input[type="number"] {
+            width: 60px;
+        }
+    </style>
+</head>
+<body>
+    <div id="controls">
+        <button id="connectButton" class="button">Connect</button>
+        <button id="disconnectButton" class="button" disabled>Disconnect</button>
+        <button id="downloadButton" class="button" disabled>Download Data</button>
+        <div class="filter-options">
+            <label>
+                <input type="checkbox" id="notchFilterCheckbox" checked>
+                Notch Filter (50 Hz)
+            </label>
+            <label>
+                Notch Bandwidth (Hz):
+                <input type="number" id="notchBandwidthInput" value="5" min="1" max="20">
+            </label>
+            <br>
+            <label>
+                <input type="checkbox" id="bandpassFilterCheckbox">
+                Bandpass Filter
+            </label>
+            <label>
+                Lower Cutoff:
+                <input type="number" id="bandpassLowerInput" value="3" min="0" max="500">
+            </label>
+            <label>
+                Upper Cutoff:
+                <input type="number" id="bandpassUpperInput" value="45" min="0" max="500">
+            </label>
+        </div>
+    </div>
+    <div id="canvas-container">
+        <canvas id="canvas"></canvas>
+        <canvas id="labelCanvas"></canvas>
+        <div id="scale-controls">
+            <button id="scaleUpButton">Scale Up</button>
+            <button id="scaleDownButton">Scale Down</button>
+        </div>
+    </div>
+    <script type="module" src="app.js"></script>
+</body>
+</html>
