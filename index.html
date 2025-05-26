@@ -124,33 +124,34 @@
         </div>
         
         <div class="filter-options">
-            <label>
-                <input type="checkbox" id="notchFilterCheckbox" checked>
-                Notch Filter (50 Hz)
-            </label>
-            <label>
-                Notch Bandwidth (Hz):
-                <input type="number" id="notchBandwidthInput" value="5" min="1" max="20">
-            </label>
-            <br>
-            <label>
-                <input type="checkbox" id="bandpassFilterCheckbox">
-                Bandpass Filter
-            </label>
-            <label>
-                Lower Cutoff:
-                <input type="number" id="bandpassLowerInput" value="3" min="0" max="500">
-            </label>
-            <label>
-                Upper Cutoff:
-                <input type="number" id="bandpassUpperInput" value="45" min="0" max="500">
-            </label>
-        </div>
-    </div>
+			<label>
+				<input type="checkbox" id="notchFilterCheckbox"> Notch Filter (50 Hz)
+			</label>
+			<label>
+				Notch Bandwidth (Hz):
+				<input type="number" id="notchBandwidthInput" value="5" min="1" max="20">
+			</label>
+			<br>
+			<label>
+				<input type="checkbox" id="bandpassFilterCheckbox"> Bandpass Filter
+			</label>
+			<label>
+				Lower Cutoff:
+				<input type="number" id="bandpassLowerInput" value="0.3" min="0" max="500"> </label>
+			<label>
+				Upper Cutoff:
+				<input type="number" id="bandpassUpperInput" value="70" min="0" max="500"> </label>
+			<br> 
+			<label> 
+				<input type="checkbox" id="dcBlockerCheckbox" checked> DC Blocker
+			</label>
+		</div>
     
     <div id="status">
         Status: <span id="connectionStatus">Disconnected</span> | 
         <span id="logOutput">Ready to connect...</span>
+		<span id="runtimeClock" style="margin-left: 10px;"></span>
+
     </div>
 
     <h3 class="container-label">EEG Channels (8 channels)</h3>
