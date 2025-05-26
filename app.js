@@ -343,12 +343,18 @@ document.addEventListener('DOMContentLoaded', () => {
   function setupPlot(canvasId, labelCanvasId, numChannels, type) {
     const canvas = document.getElementById(canvasId);
     const labelCanvas = document.getElementById(labelCanvasId);
-    const labelCtx = labelCanvas.getContext('2d');
 
     if (!canvas) {
       console.error(`Canvas element ${canvasId} not found`);
-      return;
+      return null;
     }
+
+    if (!labelCanvas) {
+      console.error(`Label canvas element ${labelCanvasId} not found`);
+      return null;
+    }
+
+    const labelCtx = labelCanvas.getContext('2d');
 
     // Set canvas dimensions
     canvas.width = canvas.clientWidth;
@@ -461,6 +467,8 @@ document.addEventListener('DOMContentLoaded', () => {
         for (let i = 0; i < plot.numChannels; i++) {
           const line = plot.lines[i];
           const data = plot.dataBuffers[i];
+          
+          // Fixed baseline positions - equally distributed
           const offsetY = ((plot.numChannels - i - 0.5) / plot.numChannels) * verticalRange - (verticalRange / 2);
 
           for (let j = 0; j < numPoints; j++) {
@@ -471,14 +479,16 @@ document.addEventListener('DOMContentLoaded', () => {
               // Apply filters based on current settings for EEG data
               value = applyVisualizationFilters(value, i);
               
-              // Convert µV to V, then scale by yRange
+              // Convert µV to normalized value, then scale by yRange
+              // Value scaling is independent of baseline spacing
               value = (value / 1e6) / plot.yRange;
             } else {
               // For IMU data, scale by yRange
               value = value / plot.yRange;
             }
             
-            line.setY(j, value + offsetY);
+            // Add scaled value to FIXED baseline position
+            line.setY(j, offsetY + value);
           }
         }
         plot.webglp.update();
@@ -496,6 +506,8 @@ document.addEventListener('DOMContentLoaded', () => {
 
         for (let i = 0; i < plot.numChannels; i++) {
           const line = plot.lines[i];
+          
+          // Fixed baseline positions - equally distributed
           const offsetY = ((plot.numChannels - i - 0.5) / plot.numChannels) * verticalRange - (verticalRange / 2);
 
           for (let j = 0; j < numPoints; j++) {
@@ -512,6 +524,7 @@ document.addEventListener('DOMContentLoaded', () => {
                 // Apply filters based on current settings
                 value = applyVisualizationFilters(value, i);
                 
+                // Convert µV to normalized value, then scale by yRange
                 value = (value / 1e6) / plot.yRange;
               } else if (plot.type === 'Accel' && dataPoint.imuData) {
                 const accelValues = [
@@ -535,7 +548,8 @@ document.addEventListener('DOMContentLoaded', () => {
               }
             }
             
-            line.setY(j, value + offsetY);
+            // Add scaled value to FIXED baseline position
+            line.setY(j, offsetY + value);
           }
         }
         plot.webglp.update();
@@ -581,10 +595,18 @@ document.addEventListener('DOMContentLoaded', () => {
   setupScaleButtons('gyro', plots.gyro);
 
   function setupScaleButtons(type, plot) {
-    if (!plot) return;
+    if (!plot) {
+      console.warn(`Plot ${type} not available, skipping scale buttons`);
+      return;
+    }
 
     const scaleUpButton = document.getElementById(`${type}ScaleUpButton`);
     const scaleDownButton = document.getElementById(`${type}ScaleDownButton`);
+
+    if (!scaleUpButton || !scaleDownButton) {
+      console.warn(`Scale buttons for ${type} not found`);
+      return;
+    }
 
     scaleUpButton.addEventListener('click', () => {
       plot.yRange /= 1.2; // Decrease range = zoom in (more sensitive)
@@ -603,6 +625,7 @@ document.addEventListener('DOMContentLoaded', () => {
   console.log('loadDataButton:', loadDataButton);
   console.log('fileInput:', fileInput);
   console.log('navigationControls:', navigationControls);
+  console.log('plots:', plots);
 
   if (!connectButton) {
     console.error('Connect button not found!');
@@ -612,6 +635,15 @@ document.addEventListener('DOMContentLoaded', () => {
   }
   if (!fileInput) {
     console.error('File input not found!');
+  }
+  if (!plots.eeg) {
+    console.error('EEG plot setup failed!');
+  }
+  if (!plots.accel) {
+    console.error('Accel plot setup failed!');
+  }
+  if (!plots.gyro) {
+    console.error('Gyro plot setup failed!');
   }
 
   // Logging function
@@ -1112,37 +1144,38 @@ document.addEventListener('DOMContentLoaded', () => {
       }
     }
 
-    // Draw y-axis labels for each channel
+    // Draw y-axis labels for each channel with FIXED baseline positions
     const verticalMargin = 0.1;
     const verticalRange = 2 - 2 * verticalMargin;
     
     for (let i = 0; i < plot.numChannels; i++) {
+      // Fixed baseline positions - same as in display functions
       const offsetY = ((plot.numChannels - i - 0.5) / plot.numChannels) * verticalRange - (verticalRange / 2);
       const y = ((-offsetY + verticalRange / 2) / verticalRange) * plot.labelCanvas.height;
 
-      // Draw horizontal line at center of each channel
+      // Draw horizontal line at center of each channel (baseline)
       plot.labelCtx.strokeStyle = '#666';
       plot.labelCtx.beginPath();
       plot.labelCtx.moveTo(0, y);
       plot.labelCtx.lineTo(plot.labelCanvas.width, y);
       plot.labelCtx.stroke();
 
-      // Draw y-axis labels
+      // Draw y-axis labels showing the FULL scale range
       plot.labelCtx.fillStyle = '#fff';
       let yLabel;
       
       if (plot.type === 'EEG') {
-        // Calculate the range per division for EEG in µV
-        const rangePerChannel = (verticalRange / plot.numChannels) * plot.yRange * 1e6; // Convert to µV
-        yLabel = `Ch${i + 1} ±${(rangePerChannel / 2).toFixed(0)}µV`;
+        // Show the full range that can be displayed around the baseline
+        const fullRangeµV = plot.yRange * 1e6; // Convert to µV
+        yLabel = `Ch${i + 1} ±${(fullRangeµV).toFixed(0)}µV`;
       } else if (plot.type === 'Accel') {
         const labels = ['X', 'Y', 'Z', 'Mag'];
-        const rangePerChannel = (verticalRange / plot.numChannels) * plot.yRange;
-        yLabel = `${labels[i]} ±${(rangePerChannel / 2).toFixed(0)}`;
+        const fullRange = plot.yRange;
+        yLabel = `${labels[i]} ±${(fullRange).toFixed(0)}`;
       } else if (plot.type === 'Gyro') {
         const labels = ['X', 'Y', 'Z'];
-        const rangePerChannel = (verticalRange / plot.numChannels) * plot.yRange;
-        yLabel = `${labels[i]} ±${(rangePerChannel / 2).toFixed(0)}`;
+        const fullRange = plot.yRange;
+        yLabel = `${labels[i]} ±${(fullRange).toFixed(0)}`;
       }
       
       plot.labelCtx.fillText(yLabel, 2, y - 5);
