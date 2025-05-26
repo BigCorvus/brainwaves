@@ -732,8 +732,8 @@ document.addEventListener('DOMContentLoaded', () => {
   document.addEventListener('keydown', (e) => {
     if(!isPlaybackMode||!loadedData)return;
     switch(e.key){
-      case 'ArrowLeft': navigateData(e.shiftKey?-displayDurationSeconds:-1); e.preventDefault(); break;
-      case 'ArrowRight': navigateData(e.shiftKey?displayDurationSeconds:1); e.preventDefault(); break;
+      case 'ArrowLeft': navigateData(e.shiftKey?-displayDurationSeconds:-15); e.preventDefault(); break;
+      case 'ArrowRight': navigateData(e.shiftKey?displayDurationSeconds:15); e.preventDefault(); break;
     }
   });
 });
