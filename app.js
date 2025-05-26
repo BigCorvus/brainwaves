@@ -10,20 +10,20 @@ class BiquadChannelFilterer {
   constructor(options = {}) {
     this.idx = 0;
     this.sps = options.sps || 512;
-    this.bandpassLower = options.bandpassLower || 3;
-    this.bandpassUpper = options.bandpassUpper || 45;
+    this.bandpassLower = options.bandpassLower || 0.3; // Default updated
+    this.bandpassUpper = options.bandpassUpper || 70;  // Default updated
 
     this.useSMA4 = options.useSMA4 || false;
     this.last4 = [];
     this.filtered = 0;
     this.trimOutliers = options.trimOutliers || false;
     this.outlierTolerance = options.outlierTolerance || 0.20;
-    this.useNotch50 = options.useNotch50 || true;
+    this.useNotch50 = options.useNotch50 || false; // Default updated
     this.useNotch60 = options.useNotch60 || false;
     this.useLowpass = options.useLowpass || false;
     this.lowpassHz = options.lowpassHz || 100;
-    this.useBandpass = options.useBandpass || false;
-    this.useDCBlock = options.useDCBlock || true;
+    this.useBandpass = options.useBandpass || false; // Default updated
+    this.useDCBlock = options.useDCBlock || true; // Controlled by its own checkbox now
     this.DCBresonance = options.DCBresonance || 0.995;
     this.useScaling = options.useScaling || false;
     this.scalar = options.scalar || 1;
@@ -54,7 +54,7 @@ class BiquadChannelFilterer {
       makeBandpassFilter(this.bandpassLower, this.bandpassUpper, sps)
     ];
 
-    this.dcb = new DCBlocker(this.DCBresonance);
+    this.dcb = new DCBlocker(this.DCBresonance); // Resets DC blocker state
     this.filtered = 0;
     this.idx = 0;
     this.last4 = [];
@@ -63,12 +63,7 @@ class BiquadChannelFilterer {
   setBandpass(bandpassLower = this.bandpassLower, bandpassUpper = this.bandpassUpper, sps = this.sps) {
     this.bandpassLower = bandpassLower;
     this.bandpassUpper = bandpassUpper;
-    this.bp1 = [
-      makeBandpassFilter(bandpassLower, bandpassUpper, sps),
-      makeBandpassFilter(bandpassLower, bandpassUpper, sps),
-      makeBandpassFilter(bandpassLower, bandpassUpper, sps),
-      makeBandpassFilter(bandpassLower, bandpassUpper, sps)
-    ];
+    this.reset(sps); 
   }
 
   setNotchBandwidth(bandwidth) {
@@ -141,143 +136,82 @@ class Biquad {
     this.a0 = 0; this.a1 = 0; this.a2 = 0;
     this.b0 = 0; this.b1 = 0; this.b2 = 0;
 
-    this.x1 = 0;
-    this.x2 = 0;
-    this.y1 = 0;
-    this.y2 = 0;
+    this.x1 = 0; this.x2 = 0; this.y1 = 0; this.y2 = 0;
 
     let A = Math.pow(10, dbGain / 40);
     let omega = 2 * Math.PI * freq / sps;
     let sn = Math.sin(omega);
     let cs = Math.cos(omega);
     let alpha = sn / (2 * Q);
-    let beta = Math.sqrt(A + A);
+    let beta = Math.sqrt(A + A); 
 
-    this[type](A, sn, cs, alpha, beta);
+    this[type](A, sn, cs, alpha, beta); 
 
-    this.b0 /= this.a0;
-    this.b1 /= this.a0;
-    this.b2 /= this.a0;
-    this.a1 /= this.a0;
-    this.a2 /= this.a0;
+    if (this.a0 !== 0 && this.a0 !== 1) { 
+        this.b0 /= this.a0; this.b1 /= this.a0; this.b2 /= this.a0;
+        this.a1 /= this.a0; this.a2 /= this.a0; this.a0 = 1; 
+    } else if (this.a0 === 0) {
+        console.error("Biquad filter a0 coefficient is zero, filter is unstable or incorrectly configured.");
+        this.b0 = 1; this.b1 = 0; this.b2 = 0; this.a0 = 1; this.a1 = 0; this.a2 = 0;
+    }
   }
 
   lowpass(A, sn, cs, alpha, beta) {
-    this.b0 = (1 - cs) * 0.5;
-    this.b1 = 1 - cs;
-    this.b2 = (1 - cs) * 0.5;
-    this.a0 = 1 + alpha;
-    this.a1 = -2 * cs;
-    this.a2 = 1 - alpha;
+    this.b0 = (1 - cs) * 0.5; this.b1 = 1 - cs; this.b2 = (1 - cs) * 0.5;
+    this.a0 = 1 + alpha; this.a1 = -2 * cs; this.a2 = 1 - alpha;
   }
-
   highpass(A, sn, cs, alpha, beta) {
-    this.b0 = (1 + cs) * 0.5;
-    this.b1 = -(1 + cs);
-    this.b2 = (1 + cs) * 0.5;
-    this.a0 = 1 + alpha;
-    this.a1 = -2 * cs;
-    this.a2 = 1 - alpha;
+    this.b0 = (1 + cs) * 0.5; this.b1 = -(1 + cs); this.b2 = (1 + cs) * 0.5;
+    this.a0 = 1 + alpha; this.a1 = -2 * cs; this.a2 = 1 - alpha;
   }
-
   bandpass(A, sn, cs, alpha, beta) {
-    this.b0 = alpha;
-    this.b1 = 0;
-    this.b2 = -alpha;
-    this.a0 = 1 + alpha;
-    this.a1 = -2 * cs;
-    this.a2 = 1 - alpha;
+    this.b0 = alpha; this.b1 = 0; this.b2 = -alpha; 
+    this.a0 = 1 + alpha; this.a1 = -2 * cs; this.a2 = 1 - alpha;
   }
-
   notch(A, sn, cs, alpha, beta) {
-    this.b0 = 1;
-    this.b1 = -2 * cs;
-    this.b2 = 1;
-    this.a0 = 1 + alpha;
-    this.a1 = -2 * cs;
-    this.a2 = 1 - alpha;
+    this.b0 = 1; this.b1 = -2 * cs; this.b2 = 1;
+    this.a0 = 1 + alpha; this.a1 = -2 * cs; this.a2 = 1 - alpha;
   }
-
   peak(A, sn, cs, alpha, beta) {
-    this.b0 = 1 + (alpha * A);
-    this.b1 = -2 * cs;
-    this.b2 = 1 - (alpha * A);
-    this.a0 = 1 + (alpha / A);
-    this.a1 = -2 * cs;
-    this.a2 = 1 - (alpha / A);
+    this.b0 = 1 + (alpha * A); this.b1 = -2 * cs; this.b2 = 1 - (alpha * A);
+    this.a0 = 1 + (alpha / A); this.a1 = -2 * cs; this.a2 = 1 - (alpha / A);
   }
-
   lowshelf(A, sn, cs, alpha, beta) {
-    this.b0 = A * ((A + 1) - (A - 1) * cs + beta * sn);
-    this.b1 = 2 * A * ((A - 1) - (A + 1) * cs);
-    this.b2 = A * ((A + 1) - (A - 1) * cs - beta * sn);
-    this.a0 = (A + 1) + (A + 1) * cs + beta * sn;
-    this.a1 = -2 * ((A - 1) + (A + 1) * cs);
-    this.a2 = (A + 1) + (A - 1) * cs - beta * sn;
+    this.b0 = A * ((A + 1) - (A - 1) * cs + beta * sn); this.b1 = 2 * A * ((A - 1) - (A + 1) * cs); this.b2 = A * ((A + 1) - (A - 1) * cs - beta * sn);
+    this.a0 = (A + 1) + (A - 1) * cs + beta * sn; this.a1 = -2 * ((A - 1) + (A + 1) * cs); this.a2 = (A + 1) + (A - 1) * cs - beta * sn;
   }
-
   highshelf(A, sn, cs, alpha, beta) {
-    this.b0 = A * ((A + 1) + (A - 1) * cs + beta * sn);
-    this.b1 = -2 * A * ((A - 1) + (A + 1) * cs);
-    this.b2 = A * ((A + 1) - (A - 1) * cs - beta * sn);
-    this.a0 = (A + 1) - (A + 1) * cs - beta * sn;
-    this.a1 = 2 * ((A - 1) - (A + 1) * cs);
-    this.a2 = (A + 1) - (A - 1) * cs - beta * sn;
+    this.b0 = A * ((A + 1) + (A - 1) * cs + beta * sn); this.b1 = -2 * A * ((A - 1) + (A + 1) * cs); this.b2 = A * ((A + 1) + (A - 1) * cs - beta * sn);
+    this.a0 = (A + 1) - (A - 1) * cs + beta * sn; this.a1 = 2 * ((A - 1) - (A + 1) * cs); this.a2 = (A + 1) - (A - 1) * cs - beta * sn;
   }
-
-  applyFilter(signal_step) {
-    let y = this.b0 * signal_step + this.b1 * this.x1 + this.b2 * this.x2 - this.a1 * this.y1 - this.a2 * this.y2;
-    this.x2 = this.x1;
-    this.x1 = signal_step;
-    this.y2 = this.y1;
-    this.y1 = y;
-    return y;
+  applyFilter(signal_step) { 
+    let y_n = this.b0 * signal_step + this.b1 * this.x1 + this.b2 * this.x2 - this.a1 * this.y1 - this.a2 * this.y2;
+    this.x2 = this.x1; this.x1 = signal_step; this.y2 = this.y1; this.y1 = y_n;
+    return y_n;
   }
-
-  static calcCenterFrequency(freqStart, freqEnd) {
-    return (freqStart + freqEnd) / 2;
-  }
-
-  static calcBandwidth(freqStart, freqEnd) {
-    return (freqEnd - freqStart);
-  }
-
+  static calcCenterFrequency(freqStart, freqEnd) { return Math.sqrt(freqStart * freqEnd); }
+  static calcBandwidth(freqStart, freqEnd) { return (freqEnd - freqStart); }
   static calcBandpassQ(frequency, bandwidth, resonance = 1) {
-    let Q = frequency / bandwidth;
-    Q = Math.max(Q, 0.5);
-    Q = Math.min(Q, 15);
-    return Q;
+    if (bandwidth <= 0) return 100; let Q = frequency / bandwidth;
+    Q = Math.max(Q, 0.1); Q = Math.min(Q, 100); return Q;
   }
-
   static calcNotchQ(frequency, bandwidth, resonance = 1) {
-    let Q = frequency / bandwidth;
-    Q = Math.max(Q, 0.5);
-    Q = Math.min(Q, 15);
-    return Q;
+    if (bandwidth <= 0) return 100; let Q = frequency / bandwidth;
+    Q = Math.max(Q, 0.1); Q = Math.min(Q, 100); return Q;
   }
 }
 
 class DCBlocker {
-  constructor(r = 0.995) {
-    this.r = r;
-    this.x1 = this.x2 = this.y1 = this.y2 = 0;
-  }
-
-  applyFilter(signal_step) {
-    this.x2 = this.x1;
-    this.x1 = signal_step;
-    let y = this.x1 - this.x2 + this.r * this.y1;
-    this.y2 = this.y1;
-    this.y1 = y;
-    return y;
+  constructor(r = 0.995) { this.r = r; this.x1 = 0; this.y1 = 0; }
+  applyFilter(signal_step) { 
+    let y = signal_step - this.x1 + this.r * this.y1;
+    this.x1 = signal_step; this.y1 = y; return y;
   }
 }
 
 const makeNotchFilter = (frequency, sps, bandwidth) => {
-  let Q = Biquad.calcNotchQ(frequency, bandwidth);
-  return new Biquad('notch', frequency, sps, Q, 0);
+  let Q = Biquad.calcNotchQ(frequency, bandwidth); return new Biquad('notch', frequency, sps, Q, 0);
 };
-
 const makeBandpassFilter = (freqStart, freqEnd, sps, resonance = 1) => {
   let centerFrequency = Biquad.calcCenterFrequency(freqStart, freqEnd);
   let bandwidth = Biquad.calcBandwidth(freqStart, freqEnd);
@@ -290,27 +224,18 @@ const makeBandpassFilter = (freqStart, freqEnd, sps, resonance = 1) => {
 /////////////////////////////////////////////////////////////
 
 document.addEventListener('DOMContentLoaded', () => {
-  // Constants
-  const sps = 250; // Sampling rate in Hz
-  const numPoints = 3750; // 250 Hz * 15 seconds
-  const numEEGChannels = 8;
-  const numAccelChannels = 4; // X, Y, Z, Magnitude
-  const numGyroChannels = 3; // X, Y, Z
+  const eegSps = 250; const imuSps = 50; 
+  const displayDurationSeconds = 15; 
+  const numEEGPoints = eegSps * displayDurationSeconds;
+  const numIMUPoints = imuSps * displayDurationSeconds;
+  const numEEGChannels = 8; const numAccelChannels = 4; const numGyroChannels = 3; 
 
-  // BLE connection variables
-  let bluetoothDevice;
-  let bleServer;
-  let bleCharacteristic;
-  let isConnecting = false;
+  let bluetoothDevice, bleServer, bleCharacteristic, isConnecting = false;
+  let loadedData = null, isPlaybackMode = false, currentPlaybackTimeSeconds = 0, maxPlaybackTimeSeconds = 0;
+  let recordedData = []; 
+  let connectionStartTime = null; // To store the connection start time
+  let runtimeIntervalId = null;   // To store the interval ID for the runtime clock
 
-  // Data playback variables
-  let loadedData = null;
-  let isPlaybackMode = false;
-  let currentTimeIndex = 0;
-  let maxTimeIndex = 0;
-  let recordedData = [];
-
-  // Get DOM elements
   const connectButton = document.getElementById('connectButton');
   const disconnectButton = document.getElementById('disconnectButton');
   const downloadButton = document.getElementById('downloadButton');
@@ -325,170 +250,92 @@ document.addEventListener('DOMContentLoaded', () => {
   const timeDisplay = document.getElementById('timeDisplay');
   const connectionStatus = document.getElementById('connectionStatus');
   const logOutput = document.getElementById('logOutput');
+  const runtimeClockElement = document.getElementById('runtimeClock'); // Get the runtime clock element
   
-  // Filter controls
   const notchFilterCheckbox = document.getElementById('notchFilterCheckbox');
   const notchBandwidthInput = document.getElementById('notchBandwidthInput');
   const bandpassFilterCheckbox = document.getElementById('bandpassFilterCheckbox');
   const bandpassLowerInput = document.getElementById('bandpassLowerInput');
   const bandpassUpperInput = document.getElementById('bandpassUpperInput');
+  const dcBlockerCheckbox = document.getElementById('dcBlockerCheckbox'); 
 
-  // Canvas and plot setup
+  if (bandpassLowerInput) bandpassLowerInput.value = bandpassLowerInput.value || "0.3";
+  if (bandpassUpperInput) bandpassUpperInput.value = bandpassUpperInput.value || "70";
+
   const plots = {
-    eeg: setupPlot('eegCanvas', 'eegLabelCanvas', numEEGChannels, 'EEG'),
-    accel: setupPlot('accelCanvas', 'accelLabelCanvas', numAccelChannels, 'Accel'),
-    gyro: setupPlot('gyroCanvas', 'gyroLabelCanvas', numGyroChannels, 'Gyro')
+    eeg: setupPlot('eegCanvas', 'eegLabelCanvas', numEEGChannels, 'EEG', numEEGPoints, eegSps),
+    accel: setupPlot('accelCanvas', 'accelLabelCanvas', numAccelChannels, 'Accel', numIMUPoints, imuSps),
+    gyro: setupPlot('gyroCanvas', 'gyroLabelCanvas', numGyroChannels, 'Gyro', numIMUPoints, imuSps)
   };
 
-  function setupPlot(canvasId, labelCanvasId, numChannels, type) {
-    const canvas = document.getElementById(canvasId);
-    const labelCanvas = document.getElementById(labelCanvasId);
-
-    if (!canvas) {
-      console.error(`Canvas element ${canvasId} not found`);
-      return null;
-    }
-
-    if (!labelCanvas) {
-      console.error(`Label canvas element ${labelCanvasId} not found`);
-      return null;
-    }
-
+  function setupPlot(canvasId, labelCanvasId, numChannels, type, numDataPoints, spsRate) {
+    const canvas = document.getElementById(canvasId); const labelCanvas = document.getElementById(labelCanvasId);
+    if (!canvas || !labelCanvas) { console.error(`Canvas elements for ${type} not found`); return null; }
     const labelCtx = labelCanvas.getContext('2d');
-
-    // Set canvas dimensions
-    canvas.width = canvas.clientWidth;
-    canvas.height = canvas.clientHeight;
-    labelCanvas.width = labelCanvas.clientWidth;
-    labelCanvas.height = labelCanvas.clientHeight;
-
-    // Initialize WebGLPlot
+    canvas.width = canvas.clientWidth; canvas.height = canvas.clientHeight;
+    labelCanvas.width = labelCanvas.clientWidth; labelCanvas.height = labelCanvas.clientHeight;
     const webglp = new WebglPlot(canvas);
-    const lines = [];
-    const dataBuffers = [];
-    const filters = [];
+    const lines = [], dataBuffers = [], filters = [];
+    let initialYScaleValue; 
+    if (type === 'EEG') initialYScaleValue = 50; 
+    else if (type === 'Accel') initialYScaleValue = 5000; 
+    else if (type === 'Gyro') initialYScaleValue = 5000;  
 
-    let yScale = 1.0; // Base scale for all plot types
-    
-    // Set initial Y-axis range based on plot type
-    let yRange;
-    if (type === 'EEG') {
-      yRange = 70e-6; // 70µV/div in Volts
-    } else if (type === 'Accel') {
-      yRange = 5000; // 5000 units/div for accelerometer
-    } else if (type === 'Gyro') {
-      yRange = 1500; // 1500 units/div for gyroscope
-    }
-
-    // Create lines and data buffers for each channel
     for (let i = 0; i < numChannels; i++) {
-      const color = new ColorRGBA(
-        Math.random() * 0.8 + 0.2,
-        Math.random() * 0.8 + 0.2,
-        Math.random() * 0.8 + 0.2,
-        1
-      );
-      const line = new WebglLine(color, numPoints);
-      line.lineSpaceX(-1, 2 / numPoints);
-
-      // Offset each line vertically
-      const verticalMargin = 0.1;
-      const verticalRange = 2 - 2 * verticalMargin;
-      const offsetY = ((numChannels - i - 0.5) / numChannels) * verticalRange - (verticalRange / 2);
-
-      for (let j = 0; j < numPoints; j++) {
-        line.setY(j, offsetY);
-      }
-
-      lines.push(line);
-      webglp.addLine(line);
-
-      // Initialize data buffer for the channel
-      dataBuffers.push(new Float32Array(numPoints).fill(0));
-
-      // Initialize filters for EEG channels only
+      const color = new ColorRGBA(Math.random()*0.7+0.3, Math.random()*0.7+0.3, Math.random()*0.7+0.3, 1);
+      const line = new WebglLine(color, numDataPoints);
+      line.lineSpaceX(-1, 2 / numDataPoints); 
+      const verticalMargin = 0.05, totalPlotHeight = 2.0 - 2.0 * verticalMargin, spacePerChannel = totalPlotHeight / numChannels;
+      const topOfChannelArea = (1.0 - verticalMargin) - (i * spacePerChannel), offsetY = topOfChannelArea - (spacePerChannel / 2.0);
+      for (let j = 0; j < numDataPoints; j++) line.setY(j, offsetY); 
+      lines.push(line); webglp.addLine(line); dataBuffers.push(new Float32Array(numDataPoints).fill(0));
       if (type === 'EEG') {
+        const initialUseNotch = notchFilterCheckbox ? notchFilterCheckbox.checked : false;
+        const initialUseBandpass = bandpassFilterCheckbox ? bandpassFilterCheckbox.checked : false;
+        const initialUseDCBlock = dcBlockerCheckbox ? dcBlockerCheckbox.checked : true; 
         filters.push(new BiquadChannelFilterer({
-          sps: sps,
-          useNotch50: true,
-          useBandpass: false,
-          bandpassLower: 3,
-          bandpassUpper: 45,
-          useDCBlock: true,
-          notchBandwidth: 5
+          sps: spsRate, 
+          useNotch50: initialUseNotch, useBandpass: initialUseBandpass,
+          bandpassLower: parseFloat(bandpassLowerInput.value), 
+          bandpassUpper: parseFloat(bandpassUpperInput.value), 
+          useDCBlock: initialUseDCBlock, 
+          notchBandwidth: parseFloat(notchBandwidthInput.value) || 5
         }));
       }
     }
-
-    return {
-      canvas,
-      labelCanvas,
-      labelCtx,
-      webglp,
-      lines,
-      dataBuffers,
-      filters,
-      yScale,
-      yRange,
-      numChannels,
-      type
-    };
+    return { canvas, labelCanvas, labelCtx, webglp, lines, dataBuffers, filters, yScale: initialYScaleValue, numChannels, type, numDataPoints, spsRate };
   }
-
-  // Handle window resize
+  
   window.addEventListener('resize', () => {
     Object.values(plots).forEach(plot => {
       if (plot) {
-        plot.canvas.width = plot.canvas.clientWidth;
-        plot.canvas.height = plot.canvas.clientHeight;
-        plot.labelCanvas.width = plot.labelCanvas.clientWidth;
-        plot.labelCanvas.height = plot.labelCanvas.clientHeight;
+        plot.canvas.width = plot.canvas.clientWidth; plot.canvas.height = plot.canvas.clientHeight;
+        plot.labelCanvas.width = plot.labelCanvas.clientWidth; plot.labelCanvas.height = plot.labelCanvas.clientHeight;
         drawGrid(plot);
       }
     });
   });
 
-  // Animation loop
   function animate() {
-    if (isPlaybackMode) {
-      updatePlaybackDisplay();
-    } else {
-      updateLiveDisplay();
-    }
+    if (isPlaybackMode) updatePlaybackDisplay(); else updateLiveDisplay();
     requestAnimationFrame(animate);
   }
 
   function updateLiveDisplay() {
     Object.values(plots).forEach(plot => {
       if (plot) {
-        const verticalMargin = 0.1;
-        const verticalRange = 2 - 2 * verticalMargin;
-
+        const verticalMargin = 0.05, totalPlotHeight = 2.0 - 2.0 * verticalMargin, spacePerChannel = totalPlotHeight / plot.numChannels;
         for (let i = 0; i < plot.numChannels; i++) {
-          const line = plot.lines[i];
-          const data = plot.dataBuffers[i];
-          
-          // Fixed baseline positions - equally distributed
-          const offsetY = ((plot.numChannels - i - 0.5) / plot.numChannels) * verticalRange - (verticalRange / 2);
-
-          for (let j = 0; j < numPoints; j++) {
-            let value = data[j];
-            
-            // Apply proper scaling based on plot type
+          const line = plot.lines[i], dataFromBuffer = plot.dataBuffers[i];
+          const topOfChannelArea = (1.0 - verticalMargin) - (i * spacePerChannel), baseLineY = topOfChannelArea - (spacePerChannel / 2.0);
+          for (let j = 0; j < plot.numDataPoints; j++) {
+            let valueToPlot = dataFromBuffer[j]; 
             if (plot.type === 'EEG') {
-              // Apply filters based on current settings for EEG data
-              value = applyVisualizationFilters(value, i);
-              
-              // Convert µV to normalized value, then scale by yRange
-              // Value scaling is independent of baseline spacing
-              value = (value / 1e6) / plot.yRange;
-            } else {
-              // For IMU data, scale by yRange
-              value = value / plot.yRange;
+              valueToPlot = (valueToPlot / 1e6) * ( (spacePerChannel / 2) / (plot.yScale / 1e6) );
+            } else if (plot.type === 'Accel' || plot.type === 'Gyro') { 
+                valueToPlot = valueToPlot * ( (spacePerChannel / 2) / plot.yScale );
             }
-            
-            // Add scaled value to FIXED baseline position
-            line.setY(j, offsetY + value);
+            line.setY(j, baseLineY + valueToPlot);
           }
         }
         plot.webglp.update();
@@ -498,769 +345,395 @@ document.addEventListener('DOMContentLoaded', () => {
 
   function updatePlaybackDisplay() {
     if (!loadedData) return;
-
     Object.values(plots).forEach(plot => {
       if (plot) {
-        const verticalMargin = 0.1;
-        const verticalRange = 2 - 2 * verticalMargin;
-
+        const verticalMargin = 0.05, totalPlotHeight = 2.0 - 2.0 * verticalMargin, spacePerChannel = totalPlotHeight / plot.numChannels;
         for (let i = 0; i < plot.numChannels; i++) {
-          const line = plot.lines[i];
-          
-          // Fixed baseline positions - equally distributed
-          const offsetY = ((plot.numChannels - i - 0.5) / plot.numChannels) * verticalRange - (verticalRange / 2);
-
-          for (let j = 0; j < numPoints; j++) {
-            const timeIndex = currentTimeIndex + (j / sps);
-            const dataIndex = Math.floor(timeIndex * sps);
-            
-            let value = 0;
-            if (dataIndex >= 0 && dataIndex < loadedData.length) {
-              const dataPoint = loadedData[dataIndex];
-              
-              if (plot.type === 'EEG' && dataPoint.eegSamples && i < dataPoint.eegSamples.length) {
-                value = dataPoint.eegSamples[i];
-                
-                // Apply filters based on current settings
-                value = applyVisualizationFilters(value, i);
-                
-                // Convert µV to normalized value, then scale by yRange
-                value = (value / 1e6) / plot.yRange;
-              } else if (plot.type === 'Accel' && dataPoint.imuData) {
-                const accelValues = [
-                  dataPoint.imuData.accel.x,
-                  dataPoint.imuData.accel.y, 
-                  dataPoint.imuData.accel.z,
-                  dataPoint.imuData.accel.magnitude
-                ];
-                if (i < accelValues.length) {
-                  value = accelValues[i] / plot.yRange;
+          const line = plot.lines[i], topOfChannelArea = (1.0 - verticalMargin) - (i * spacePerChannel), baseLineY = topOfChannelArea - (spacePerChannel / 2.0);
+          for (let j = 0; j < plot.numDataPoints; j++) {
+            const timeOffsetInWindow = j / plot.spsRate, actualDataTime = currentPlaybackTimeSeconds + timeOffsetInWindow;
+            const dataIndex = Math.floor(actualDataTime * plot.spsRate); 
+            let rawValue = 0; 
+            if (plot.type === 'EEG') {
+                if (loadedData.eeg && dataIndex >= 0 && dataIndex < loadedData.eeg.length) {
+                    const eegDataPoint = loadedData.eeg[dataIndex];
+                    if (eegDataPoint && i < eegDataPoint.length) rawValue = eegDataPoint[i];
                 }
-              } else if (plot.type === 'Gyro' && dataPoint.imuData) {
-                const gyroValues = [
-                  dataPoint.imuData.gyro.x,
-                  dataPoint.imuData.gyro.y,
-                  dataPoint.imuData.gyro.z
-                ];
-                if (i < gyroValues.length) {
-                  value = gyroValues[i] / plot.yRange;
+            } else if (plot.type === 'Accel') {
+                if (loadedData.accel && dataIndex >= 0 && dataIndex < loadedData.accel.length) {
+                    const accelDataPoint = loadedData.accel[dataIndex];
+                    if (accelDataPoint && i < accelDataPoint.length) rawValue = accelDataPoint[i];
                 }
-              }
+            } else if (plot.type === 'Gyro') {
+                 if (loadedData.gyro && dataIndex >= 0 && dataIndex < loadedData.gyro.length) {
+                    const gyroDataPoint = loadedData.gyro[dataIndex];
+                    if (gyroDataPoint && i < gyroDataPoint.length) rawValue = gyroDataPoint[i];
+                }
             }
-            
-            // Add scaled value to FIXED baseline position
-            line.setY(j, offsetY + value);
+            let valueToPlot = rawValue;
+            if (plot.type === 'EEG') {
+              if (plot.filters && plot.filters[i]) valueToPlot = plot.filters[i].apply(rawValue);
+              valueToPlot = (valueToPlot / 1e6) * ( (spacePerChannel / 2) / (plot.yScale / 1e6) );
+            } else if (plot.type === 'Accel' || plot.type === 'Gyro') { 
+                valueToPlot = rawValue * ( (spacePerChannel / 2) / plot.yScale );
+            }
+            line.setY(j, baseLineY + valueToPlot);
           }
         }
         plot.webglp.update();
       }
     });
-
-    // Update time display
-    const currentTime = currentTimeIndex;
-    const totalTime = maxTimeIndex;
-    timeDisplay.textContent = `${currentTime.toFixed(1)}s / ${totalTime.toFixed(1)}s`;
-  }
-
-  // New function to apply visualization filters on-the-fly
-  function applyVisualizationFilters(value, channelIndex) {
-    if (!notchFilterCheckbox.checked && !bandpassFilterCheckbox.checked) {
-      return value; // No filtering
-    }
-
-    // Create temporary filter with current settings
-    const tempFilter = new BiquadChannelFilterer({
-      sps: sps,
-      useNotch50: notchFilterCheckbox.checked,
-      useBandpass: bandpassFilterCheckbox.checked,
-      bandpassLower: parseFloat(bandpassLowerInput.value) || 3,
-      bandpassUpper: parseFloat(bandpassUpperInput.value) || 45,
-      useDCBlock: true,
-      notchBandwidth: parseFloat(notchBandwidthInput.value) || 5
-    });
-
-    return tempFilter.apply(value);
+    const displayCurrentTime = currentPlaybackTimeSeconds, displayTotalTime = maxPlaybackTimeSeconds; 
+    timeDisplay.textContent = `${displayCurrentTime.toFixed(1)}s / ${displayTotalTime.toFixed(1)}s`;
   }
 
   animate();
+  Object.values(plots).forEach(plot => { if (plot) drawGrid(plot); });
+  updateFilterSettings(); 
 
-  // Initial grid drawing
-  Object.values(plots).forEach(plot => {
-    if (plot) drawGrid(plot);
-  });
-
-  // Scaling buttons
-  setupScaleButtons('eeg', plots.eeg);
-  setupScaleButtons('accel', plots.accel);
-  setupScaleButtons('gyro', plots.gyro);
-
+  setupScaleButtons('eeg', plots.eeg); setupScaleButtons('accel', plots.accel); setupScaleButtons('gyro', plots.gyro);
   function setupScaleButtons(type, plot) {
-    if (!plot) {
-      console.warn(`Plot ${type} not available, skipping scale buttons`);
-      return;
-    }
-
+    if (!plot) return;
     const scaleUpButton = document.getElementById(`${type}ScaleUpButton`);
     const scaleDownButton = document.getElementById(`${type}ScaleDownButton`);
-
-    if (!scaleUpButton || !scaleDownButton) {
-      console.warn(`Scale buttons for ${type} not found`);
-      return;
-    }
-
-    scaleUpButton.addEventListener('click', () => {
-      plot.yRange /= 1.2; // Decrease range = zoom in (more sensitive)
-      drawGrid(plot);
-    });
-
-    scaleDownButton.addEventListener('click', () => {
-      plot.yRange *= 1.2; // Increase range = zoom out (less sensitive)
-      drawGrid(plot);
-    });
+    if (!scaleUpButton || !scaleDownButton) return;
+    scaleUpButton.addEventListener('click', () => { plot.yScale /= 1.5; drawGrid(plot); });
+    scaleDownButton.addEventListener('click', () => { plot.yScale *= 1.5; drawGrid(plot); });
   }
 
-  // Debug: Check if all elements are found
-  console.log('DOM Elements found:');
-  console.log('connectButton:', connectButton);
-  console.log('loadDataButton:', loadDataButton);
-  console.log('fileInput:', fileInput);
-  console.log('navigationControls:', navigationControls);
-  console.log('plots:', plots);
-
-  if (!connectButton) {
-    console.error('Connect button not found!');
-  }
-  if (!loadDataButton) {
-    console.error('Load data button not found!');
-  }
-  if (!fileInput) {
-    console.error('File input not found!');
-  }
-  if (!plots.eeg) {
-    console.error('EEG plot setup failed!');
-  }
-  if (!plots.accel) {
-    console.error('Accel plot setup failed!');
-  }
-  if (!plots.gyro) {
-    console.error('Gyro plot setup failed!');
-  }
-
-  // Logging function
-  function log(text) {
-    const timestamp = '[' + new Date().toJSON().substr(11, 8) + '] ';
-    logOutput.textContent = timestamp + text;
-    console.log(timestamp + text);
-  }
-
-  // Status update function
-  function updateConnectionStatus(status) {
-    connectionStatus.textContent = status;
-    connectionStatus.className = status.toLowerCase().replace(' ', '');
-  }
-
-  // Data loading and navigation functions
+  function log(text) { const ts = '['+new Date().toJSON().substr(11,8)+'] '; logOutput.textContent = ts+text; console.log(ts+text); }
+  function updateConnectionStatus(status) { connectionStatus.textContent = status; connectionStatus.className = status.toLowerCase().replace(/\s+/g,''); }
+  
   async function loadCSVData(file) {
     try {
       const text = await file.text();
-      const lines = text.split('\n');
-      const headers = lines[0].split(',');
-      
-      // Find column indices
-      const timestampIndex = headers.findIndex(h => h.trim().toLowerCase().includes('timestamp'));
-      const eegStartIndex = headers.findIndex(h => h.includes('EEG_Ch1'));
-      const accelXIndex = headers.findIndex(h => h.includes('Accel_X'));
-      const gyroXIndex = headers.findIndex(h => h.includes('Gyro_X'));
-      
-      if (timestampIndex === -1 || eegStartIndex === -1) {
-        alert('Invalid CSV format. Missing required columns.');
-        return;
+      const lines = text.split('\n').filter(line => line.trim() !== ''); 
+      if (lines.length < 2) { alert('CSV file is empty or has no data rows.'); return; }
+      const headers = lines[0].split(',').map(h => h.trim().toLowerCase());
+      const parsedEEG = [], parsedAccel = [], parsedGyro = [];
+      const eegColIndices = [];
+      for (let i = 0; i < numEEGChannels; i++) {
+        const idx = headers.indexOf(`eeg_ch${i + 1}`);
+        if (idx === -1) { alert(`EEG Channel eeg_ch${i+1} not found in CSV.`); return; }
+        eegColIndices.push(idx);
       }
-      
-      const parsedData = [];
-      
-      for (let i = 1; i < lines.length; i++) {
-        const line = lines[i].trim();
-        if (!line) continue;
-        
-        const values = line.split(',');
-        if (values.length < headers.length) continue;
-        
-        // Parse EEG data
-        const eegSamples = [];
-        for (let j = 0; j < numEEGChannels; j++) {
-          const value = parseFloat(values[eegStartIndex + j]);
-          eegSamples.push(isNaN(value) ? 0 : value);
-        }
-        
-        // Parse IMU data
-        let imuData = {
-          accel: { x: 0, y: 0, z: 0, magnitude: 0 },
-          gyro: { x: 0, y: 0, z: 0 },
-          temperature: 0,
-          deviceStatus: 0,
-          deviceTimestamp: 0,
-          packetIndex: 0,
-          commandTimestamp: 0,
-          incomingCommand: 0
-        };
-        
-        if (accelXIndex !== -1) {
-          imuData.accel.x = parseFloat(values[accelXIndex]) || 0;
-          imuData.accel.y = parseFloat(values[accelXIndex + 1]) || 0;
-          imuData.accel.z = parseFloat(values[accelXIndex + 2]) || 0;
-          imuData.accel.magnitude = parseFloat(values[accelXIndex + 3]) || 0;
-        }
-        
-        if (gyroXIndex !== -1) {
-          imuData.gyro.x = parseFloat(values[gyroXIndex]) || 0;
-          imuData.gyro.y = parseFloat(values[gyroXIndex + 1]) || 0;
-          imuData.gyro.z = parseFloat(values[gyroXIndex + 2]) || 0;
-        }
-        
-        // Parse additional IMU fields if available
-        const tempIndex = headers.findIndex(h => h.includes('Temperature'));
-        if (tempIndex !== -1) {
-          imuData.temperature = parseFloat(values[tempIndex]) || 0;
-        }
-        
-        parsedData.push({
-          timestamp: values[timestampIndex],
-          eegSamples: eegSamples,
-          imuData: imuData
-        });
+      const accelCols = ['accel_x', 'accel_y', 'accel_z', 'accel_magnitude'];
+      const accelColIndices = accelCols.map(name => headers.indexOf(name));
+      const gyroCols = ['gyro_x', 'gyro_y', 'gyro_z'];
+      const gyroColIndices = gyroCols.map(name => headers.indexOf(name));
+
+      for (let k = 1; k < lines.length; k++) {
+        const values = lines[k].split(',');
+        if (values.length < headers.length) continue; 
+        parsedEEG.push(eegColIndices.map(idx => parseFloat(values[idx]) || 0));
+        if (!accelColIndices.includes(-1)) parsedAccel.push(accelColIndices.map(idx => parseFloat(values[idx]) || 0));
+        if (!gyroColIndices.includes(-1)) parsedGyro.push(gyroColIndices.map(idx => parseFloat(values[idx]) || 0));
       }
+      if (parsedEEG.length === 0) { alert('No valid EEG data found in CSV file.'); return; }
       
-      if (parsedData.length === 0) {
-        alert('No valid data found in CSV file.');
-        return;
-      }
-      
-      loadedData = parsedData;
-      maxTimeIndex = (loadedData.length - 1) / sps;
-      currentTimeIndex = 0;
-      
-      switchToPlaybackMode();
-      
-      log(`Loaded ${loadedData.length} data points (${maxTimeIndex.toFixed(1)}s)`);
-      
-    } catch (error) {
-      console.error('Error loading CSV:', error);
-      alert('Error loading CSV file: ' + error.message);
-    }
+      loadedData = { eeg: parsedEEG, accel: parsedAccel, gyro: parsedGyro };
+      maxPlaybackTimeSeconds = (parsedEEG.length > 0 ? (parsedEEG.length -1) / eegSps : 0);
+      currentPlaybackTimeSeconds = 0; 
+      switchToPlaybackMode(); updatePlaybackDisplay(); 
+      log(`Loaded CSV: ${parsedEEG.length} EEG samples. Playback duration: ~${maxPlaybackTimeSeconds.toFixed(1)}s`);
+    } catch (error) { console.error('Error loading CSV:', error); alert('Error loading CSV file: ' + error.message); loadedData = null; }
   }
 
   function navigateData(deltaSeconds) {
     if (!isPlaybackMode || !loadedData) return;
-    
-    currentTimeIndex += deltaSeconds;
-    currentTimeIndex = Math.max(0, Math.min(currentTimeIndex, maxTimeIndex - 15));
-    
-    updateTimeDisplay();
-  }
-
-  function updateTimeDisplay() {
-    if (timeDisplay) {
-      timeDisplay.textContent = `${currentTimeIndex.toFixed(1)}s / ${maxTimeIndex.toFixed(1)}s`;
-    }
+    currentPlaybackTimeSeconds += deltaSeconds;
+    const maxSeekPos = Math.max(0, maxPlaybackTimeSeconds - displayDurationSeconds);
+    currentPlaybackTimeSeconds = Math.max(0, Math.min(currentPlaybackTimeSeconds, maxSeekPos));
+    updatePlaybackDisplay(); 
+    timeDisplay.textContent = `${currentPlaybackTimeSeconds.toFixed(1)}s / ${maxPlaybackTimeSeconds.toFixed(1)}s`;
   }
 
   function switchToPlaybackMode() {
-    isPlaybackMode = true;
-    navigationControls.style.display = 'block';
-    
-    // Disable live controls
-    connectButton.disabled = true;
-    disconnectButton.disabled = true;
-    
-    updateTimeDisplay();
+    isPlaybackMode = true; navigationControls.style.display = 'block';
+    connectButton.disabled = true; disconnectButton.disabled = true; 
+    Object.values(plots).forEach(plot => {
+        if (plot && plot.type === 'EEG' && plot.filters) plot.filters.forEach(f => f.reset(plot.spsRate)); 
+    });
+    timeDisplay.textContent = `0.0s / ${(maxPlaybackTimeSeconds > 0 ? maxPlaybackTimeSeconds : 0).toFixed(1)}s`;
     log('Switched to playback mode');
   }
-
   function switchToLiveMode() {
-    isPlaybackMode = false;
-    navigationControls.style.display = 'none';
-    
-    // Re-enable live controls
-    connectButton.disabled = false;
-    disconnectButton.disabled = !bluetoothDevice || !bluetoothDevice.gatt.connected;
-    
-    log('Switched to live mode');
-  }
-
-  // Exponential backoff for reconnection
-  function exponentialBackoff(max, delay, toTry, success, fail) {
-    toTry().then(result => success(result))
-    .catch(_ => {
-      if (max === 0) {
-        return fail();
-      }
-      log('Retrying in ' + delay + 's... (' + max + ' tries left)');
-      setTimeout(function() {
-        exponentialBackoff(--max, delay * 2, toTry, success, fail);
-      }, delay * 1000);
+    isPlaybackMode = false; navigationControls.style.display = 'none';
+    loadedData = null; currentPlaybackTimeSeconds = 0; maxPlaybackTimeSeconds = 0;
+    connectButton.disabled = (bluetoothDevice && bluetoothDevice.gatt.connected);
+    disconnectButton.disabled = !(bluetoothDevice && bluetoothDevice.gatt.connected);
+    Object.values(plots).forEach(plot => {
+        if (plot) {
+            plot.dataBuffers.forEach(buffer => buffer.fill(0)); 
+            if (plot.type === 'EEG' && plot.filters) plot.filters.forEach(f => f.reset(plot.spsRate)); 
+        }
     });
+    updateFilterSettings(); log('Switched to live mode');
   }
 
-  async function connectBLE() {
-    if (isConnecting) return;
-    
-    try {
-      if (!bluetoothDevice) {
-        log('Requesting Bluetooth Device...');
-        updateConnectionStatus('Connecting');
-        bluetoothDevice = await navigator.bluetooth.requestDevice({
-          filters: [{ services: ['8badf00d-1212-efde-1523-785feabcd123'] }],
-        });
-        bluetoothDevice.addEventListener('gattserverdisconnected', onDisconnected);
-      }
-      
-      connect();
-    } catch (error) {
-      log('Failed to request device: ' + error);
-      updateConnectionStatus('Disconnected');
-      isConnecting = false;
+  function formatElapsedTime(ms) {
+    let totalSeconds = Math.floor(ms / 1000);
+    let hours = Math.floor(totalSeconds / 3600);
+    let minutes = Math.floor((totalSeconds % 3600) / 60);
+    let seconds = totalSeconds % 60;
+
+    return `${String(hours).padStart(2, '0')}:${String(minutes).padStart(2, '0')}:${String(seconds).padStart(2, '0')}`;
+  }
+
+  function updateRuntimeClock() {
+    if (connectionStartTime && runtimeClockElement) {
+      const elapsedMs = Date.now() - connectionStartTime;
+      runtimeClockElement.textContent = `Runtime: ${formatElapsedTime(elapsedMs)}`;
     }
   }
 
-  function connect() {
-    isConnecting = true;
-    updateConnectionStatus('Connecting');
-    
-    exponentialBackoff(3, 2,
-      function toTry() {
-        log('Connecting to Bluetooth Device...');
-        return bluetoothDevice.gatt.connect();
-      },
-      async function success(server) {
+  function exponentialBackoff(maxRetries, delay, toTry, success, fail) {
+    toTry().then(result => success(result))
+    .catch(error => {
+      if (maxRetries === 0) return fail(error);
+      log(`Retrying in ${delay}s... (${maxRetries} tries left) Error: ${error}`);
+      setTimeout(() => exponentialBackoff(--maxRetries, delay*2, toTry, success, fail), delay*1000);
+    });
+  }
+  async function connectBLE() {
+    if (isConnecting || (bluetoothDevice && bluetoothDevice.gatt.connected)) return;
+    try {
+      if (!bluetoothDevice) {
+        log('Requesting Bluetooth Device...'); updateConnectionStatus('Connecting');
+        const EEG_SERVICE_UUID = '8badf00d-1212-efde-1523-785feabcd123';
+        bluetoothDevice = await navigator.bluetooth.requestDevice({ filters: [ { services: [EEG_SERVICE_UUID] } ] });
+        bluetoothDevice.addEventListener('gattserverdisconnected', onDisconnected);
+      }
+      connectGatt(); 
+    } catch (error) { log('Failed to request device: '+error); updateConnectionStatus('Disconnected'); isConnecting = false; }
+  }
+  function connectGatt() {
+    isConnecting = true; updateConnectionStatus('Connecting');
+    exponentialBackoff(3, 2, 
+      () => { log(`Attempting to connect to GATT server for ${bluetoothDevice.name||bluetoothDevice.id}...`); return bluetoothDevice.gatt.connect(); },
+      async (server) => {
         try {
-          bleServer = server;
-          log('Getting Service...');
-          const service = await bleServer.getPrimaryService('8badf00d-1212-efde-1523-785feabcd123');
-          
+          bleServer = server; log('Connected to GATT. Getting Service...');
+          const EEG_SERVICE_UUID = '8badf00d-1212-efde-1523-785feabcd123';
+          const EEG_CHARACTERISTIC_UUID = '8badf00d-1212-efde-1524-785feabcd123';
+          const service = await bleServer.getPrimaryService(EEG_SERVICE_UUID);
           log('Getting Characteristic...');
-          bleCharacteristic = await service.getCharacteristic('8badf00d-1212-efde-1524-785feabcd123');
-          
+          bleCharacteristic = await service.getCharacteristic(EEG_CHARACTERISTIC_UUID);
           await bleCharacteristic.startNotifications();
           bleCharacteristic.addEventListener('characteristicvaluechanged', handleCharacteristicValueChanged);
+          connectButton.disabled = true; disconnectButton.disabled = false; downloadButton.disabled = true; 
+          updateConnectionStatus('Connected'); log(`Connected to ${bluetoothDevice.name||bluetoothDevice.id} and notifications started.`);
+          recordedData = []; isConnecting = false;
           
-          connectButton.disabled = true;
-          disconnectButton.disabled = false;
-          downloadButton.disabled = true;
-          updateConnectionStatus('Connected');
-          log('Connected and notifications started.');
-          
-          recordedData = [];
-          isConnecting = false;
+          // Start runtime clock
+          connectionStartTime = Date.now();
+          if (runtimeIntervalId) clearInterval(runtimeIntervalId); // Clear existing interval if any
+          runtimeIntervalId = setInterval(updateRuntimeClock, 1000);
+          updateRuntimeClock(); // Initial call to display time immediately
+
         } catch (error) {
-          log('Failed to setup service: ' + error);
-          onDisconnected();
+          log('Failed to setup service/characteristic: '+error);
+          if (bleServer && bleServer.connected) bleServer.disconnect();
+          onDisconnected(false); 
         }
       },
-      function fail() {
-        log('Failed to reconnect after multiple attempts.');
-        updateConnectionStatus('Disconnected');
-        isConnecting = false;
+      (error) => {
+        log(`Failed to connect after multiple attempts: ${error}`); updateConnectionStatus('Disconnected');
+        isConnecting = false; bluetoothDevice = null; 
       }
     );
   }
+  function onDisconnected(attemptReconnect = true) {
+    log(`Bluetooth Device ${bluetoothDevice?(bluetoothDevice.name||bluetoothDevice.id):''} disconnected.`);
+    updateConnectionStatus('Disconnected'); connectButton.disabled = false; disconnectButton.disabled = true;
+    downloadButton.disabled = recordedData.length === 0; 
+    if (bleCharacteristic) { bleCharacteristic.removeEventListener('characteristicvaluechanged', handleCharacteristicValueChanged); bleCharacteristic = null; }
+    bleServer = null; isConnecting = false; 
 
-  function onDisconnected() {
-    log('Bluetooth Device disconnected');
-    updateConnectionStatus('Disconnected');
-    
-    connectButton.disabled = false;
-    disconnectButton.disabled = true;
-    downloadButton.disabled = recordedData.length === 0;
-    
-    if (bleCharacteristic) {
-      bleCharacteristic.removeEventListener('characteristicvaluechanged', handleCharacteristicValueChanged);
-    }
-    
-    // Auto-reconnect if device is still available and we're not manually disconnecting
-    if (bluetoothDevice && bluetoothDevice.gatt && !isConnecting) {
-      setTimeout(() => {
-        if (!isConnecting) {
-          log('Attempting to reconnect...');
-          connect();
-        }
-      }, 2000);
-    }
+    // Stop runtime clock
+    if (runtimeIntervalId) clearInterval(runtimeIntervalId);
+    runtimeIntervalId = null;
+    connectionStartTime = null;
+    if (runtimeClockElement) runtimeClockElement.textContent = '';
   }
-
   function disconnectBLE() {
-    isConnecting = false;
-    if (bluetoothDevice && bluetoothDevice.gatt.connected) {
-      bluetoothDevice.gatt.disconnect();
-      log('Device manually disconnected.');
-      
-      if (bleCharacteristic) {
-        bleCharacteristic.removeEventListener('characteristicvaluechanged', handleCharacteristicValueChanged);
-      }
-      
-      disconnectButton.disabled = true;
-      connectButton.disabled = false;
-      downloadButton.disabled = recordedData.length === 0;
-      updateConnectionStatus('Disconnected');
+    isConnecting = false; 
+    if (bluetoothDevice && bluetoothDevice.gatt.connected) { log(`Disconnecting from ${bluetoothDevice.name||bluetoothDevice.id}...`); bluetoothDevice.gatt.disconnect(); }
+    else { 
+        onDisconnected(false); // Ensure clock is cleared even if no active gatt connection
     }
   }
-
   function handleCharacteristicValueChanged(event) {
-    const dataView = event.target.value;
-    processData(dataView);
+    const dataView = event.target.value; processData(dataView);
+    if (recordedData.length > 0 && downloadButton.disabled) downloadButton.disabled = false; 
   }
 
   function updateFilterSettings() {
-    const useNotch = notchFilterCheckbox.checked;
-    const notchBandwidth = parseFloat(notchBandwidthInput.value);
-    const useBandpass = bandpassFilterCheckbox.checked;
-    const bandpassLower = parseFloat(bandpassLowerInput.value);
-    const bandpassUpper = parseFloat(bandpassUpperInput.value);
+    const useNotch = notchFilterCheckbox ? notchFilterCheckbox.checked : false;
+    const notchBandwidth = notchBandwidthInput ? (parseFloat(notchBandwidthInput.value) || 5) : 5;
+    const useBandpass = bandpassFilterCheckbox ? bandpassFilterCheckbox.checked : false;
+    const bandpassLower = bandpassLowerInput ? (parseFloat(bandpassLowerInput.value) || 0.3) : 0.3;
+    const bandpassUpper = bandpassUpperInput ? (parseFloat(bandpassUpperInput.value) || 70) : 70;
+    const useDCBlock = dcBlockerCheckbox ? dcBlockerCheckbox.checked : true; 
 
-    for (let ch = 0; ch < numEEGChannels; ch++) {
-      const filter = plots.eeg.filters[ch];
-      filter.useNotch50 = useNotch;
-      filter.useBandpass = useBandpass;
-      filter.bandpassLower = bandpassLower;
-      filter.bandpassUpper = bandpassUpper;
-      filter.setNotchBandwidth(notchBandwidth);
-
-      // Reinitialize filters with new settings
-      filter.reset(sps);
-      if (useBandpass) {
-        filter.setBandpass(bandpassLower, bandpassUpper, sps);
-      }
+    if (plots.eeg && plots.eeg.filters) {
+        for (let ch = 0; ch < numEEGChannels; ch++) {
+          const filter = plots.eeg.filters[ch];
+          filter.useNotch50 = useNotch; 
+          filter.useBandpass = useBandpass;
+          filter.useDCBlock = useDCBlock; 
+          
+          filter.notchBandwidth = notchBandwidth; 
+          filter.bandpassLower = bandpassLower;
+          filter.bandpassUpper = bandpassUpper;
+          filter.reset(plots.eeg.spsRate); 
+        }
+        if (plots.eeg.filters.length > 0) {
+            const firstFilter = plots.eeg.filters[0];
+            log(`Filter settings: Notch=${firstFilter.useNotch50}, BP=${firstFilter.useBandpass}, DCBlock=${firstFilter.useDCBlock}, NotchBW=${firstFilter.notchBandwidth}, BP Range=${firstFilter.bandpassLower}-${firstFilter.bandpassUpper}Hz`);
+        }
     }
+    Object.values(plots).forEach(plot => { if (plot) drawGrid(plot); });
   }
 
   function processData(dataView) {
-    // Convert DataView to Uint8Array
-    const data = new Uint8Array(dataView.buffer);
-
-    // Get the current timestamp
-    const timestamp = new Date();
-
-    // Constants
-    const microvoltPerADCtick = (2420000 * 2) / 12 / (Math.pow(2, 24) - 1);
-
-    // Process EEG data (first 135 bytes)
-    for (let i = 0; i < 135; i += 27) {
-      const sample = [];
-
-      for (let j = 0; j < 9; j++) {
-        const byteIndex = i + 3 * j;
-        const bytes = [
-          data[byteIndex + 2],
-          data[byteIndex + 1],
-          data[byteIndex],
-        ];
-        const adcValue = typecastInt24(bytes);
-        const microVolts = adcValue * microvoltPerADCtick;
-        sample.push(microVolts);
-      }
-
-      // Parse IMU data from the packet (based on MATLAB code)
-      let imuData = {};
-      
-      // Accelerometer data (bytes 136-141, little endian as per MATLAB)
-      const accelX = typecastInt16([data[136], data[137]]); // Little endian: LSB first
-      const accelY = typecastInt16([data[138], data[139]]);
-      const accelZ = typecastInt16([data[140], data[141]]);
-      
-      // Calculate magnitude like in MATLAB
-      const accelMagnitude = Math.sqrt(accelX * accelX + accelY * accelY + accelZ * accelZ);
-      
-      // Gyroscope data (bytes 142-147, little endian as per MATLAB)
-      const gyroX = typecastInt16([data[142], data[143]]); // Little endian: LSB first
-      const gyroY = typecastInt16([data[144], data[145]]);
-      const gyroZ = typecastInt16([data[146], data[147]]);
-      
-      // Temperature (bytes 148-149, little endian as per MATLAB)
-      const temperature = typecastInt16([data[148], data[149]]) / 256 + 25;
-      
-      // Device status (byte 150, as per MATLAB: deviceStatus=data(150))
-      const deviceStatus = data[150];
-      
-      // Device timestamp (bytes 151-154, big endian as per MATLAB)
-      const deviceTimestamp = typecastUint32BigEndian([data[151], data[152], data[153], data[154]]);
-      
-      // Packet index (byte 155, as per MATLAB: packetIndex=data(155))
-      const packetIndex = data[155];
-      
-      // Command timestamp (bytes 156-159, big endian as per MATLAB)
-      const commandTimestamp = typecastUint32BigEndian([data[156], data[157], data[158], data[159]]);
-      
-      // Incoming command (byte 160, as per MATLAB: incomingCommand=data(160))
-      const incomingCommand = data[160];
-
-      imuData = {
-        accel: { x: accelX, y: accelY, z: accelZ, magnitude: accelMagnitude },
-        gyro: { x: gyroX, y: gyroY, z: gyroZ },
-        temperature,
-        deviceStatus,
-        deviceTimestamp,
-        packetIndex,
-        commandTimestamp,
-        incomingCommand
-      };
-
-      // Store RAW data (unfiltered) for CSV export
-      recordedData.push({
-        timestamp: timestamp.toISOString(),
-        eegSamples: sample.slice(1, numEEGChannels + 1), // Exclude metadata at index 0
-        imuData: imuData
-      });
-
-      // Update EEG data buffers for DISPLAY (store raw data, filter applied during visualization)
-      for (let ch = 0; ch < numEEGChannels; ch++) {
-        const channelData = plots.eeg.dataBuffers[ch];
-        
-        // Shift data left
-        channelData.copyWithin(0, 1);
-        
-        // Store RAW data - filtering now happens during visualization
-        let rawValue = sample[ch + 1]; // sample[0] is metadata
-        
-        // Append new raw data
-        channelData[channelData.length - 1] = rawValue;
-      }
-
-      // Update Accelerometer data buffers
-      const accelValues = [accelX, accelY, accelZ, accelMagnitude];
-      for (let ch = 0; ch < numAccelChannels; ch++) {
-        const channelData = plots.accel.dataBuffers[ch];
-        channelData.copyWithin(0, 1);
-        channelData[channelData.length - 1] = accelValues[ch];
-      }
-
-      // Update Gyroscope data buffers
-      const gyroValues = [gyroX, gyroY, gyroZ];
-      for (let ch = 0; ch < numGyroChannels; ch++) {
-        const channelData = plots.gyro.dataBuffers[ch];
-        channelData.copyWithin(0, 1);
-        channelData[channelData.length - 1] = gyroValues[ch];
-      }
+    const timestamp = new Date(); 
+    const microvoltPerADCtick = (2420000 * 2) / 12 / (Math.pow(2, 24) - 1); 
+    const numEegSamplesInPacket = 5; 
+    let imuDataForPacket = {}; 
+    if (dataView.byteLength >= 160) { 
+        const accelX = dataView.getInt16(135, false); const accelY = dataView.getInt16(137, false); const accelZ = dataView.getInt16(139, false);
+        const accelMagnitude = Math.sqrt(accelX*accelX + accelY*accelY + accelZ*accelZ); 
+        const gyroX = dataView.getInt16(141, false); const gyroY = dataView.getInt16(143, false); const gyroZ = dataView.getInt16(145, false);
+        const temperature = (dataView.getInt16(147, false) / 256.0) + 25.0; 
+        const deviceStatus = dataView.getUint8(149); const deviceTimestamp = dataView.getUint32(150, false); 
+        const packetIndex = dataView.getUint8(154); const commandTimestamp = dataView.getUint32(155, false); 
+        const incomingCommand = dataView.getUint8(159); 
+        imuDataForPacket = {
+            accel: { x: accelX, y: accelY, z: accelZ, magnitude: accelMagnitude }, 
+            gyro: { x: gyroX, y: gyroY, z: gyroZ },
+            temperature, deviceStatus, deviceTimestamp, packetIndex, commandTimestamp, incomingCommand
+        };
     }
-  }
 
-  // Helper function to convert 3 bytes into a signed 24-bit integer
-  function typecastInt24(bytes) {
-    // bytes[0]: LSB, bytes[2]: MSB
-    let value = (bytes[2] << 16) | (bytes[1] << 8) | bytes[0];
-    // Sign correction
-    if (value & 0x800000) {
-      value |= 0xFF000000;
+    for (let sampleIdx = 0; sampleIdx < numEegSamplesInPacket; sampleIdx++) {
+        const sampleBaseIndex = sampleIdx * 27; const eegRawValuesThisSample = []; 
+        for (let ch = 0; ch < 9; ch++) { 
+            const byteIndex = sampleBaseIndex + (ch * 3);
+            if (byteIndex + 2 < 135) eegRawValuesThisSample.push(typecastInt24BigEndian(dataView, byteIndex) * microvoltPerADCtick);
+            else eegRawValuesThisSample.push(0); 
+        }
+        const currentEegForRecording = eegRawValuesThisSample.slice(1, numEEGChannels + 1);
+        recordedData.push({
+            timestamp: new Date(timestamp.getTime() + (sampleIdx * (1000/eegSps))).toISOString(), 
+            eegSamples: currentEegForRecording, imuData: imuDataForPacket 
+        });
+        if (plots.eeg) {
+            for (let ch = 0; ch < numEEGChannels; ch++) { 
+                const rawValue = eegRawValuesThisSample[ch + 1]; 
+                let filteredValue = rawValue;
+                if (plots.eeg.filters && plots.eeg.filters[ch]) filteredValue = plots.eeg.filters[ch].apply(rawValue);
+                const eegBuffer = plots.eeg.dataBuffers[ch];
+                eegBuffer.copyWithin(0, 1); eegBuffer[eegBuffer.length - 1] = filteredValue;
+            }
+        }
     }
-    return value;
-  }
 
-  // Helper function to convert 2 bytes into a signed 16-bit integer
-  function typecastInt16(bytes) {
-    // bytes[0]: LSB, bytes[1]: MSB
-    let value = (bytes[1] << 8) | bytes[0];
-    // Sign correction
-    if (value & 0x8000) {
-      value |= 0xFFFF0000;
+    if (imuDataForPacket.accel && plots.accel) {
+        const accelRawADCValues = [imuDataForPacket.accel.x, imuDataForPacket.accel.y, imuDataForPacket.accel.z, imuDataForPacket.accel.magnitude]; 
+        for (let ch = 0; ch < numAccelChannels; ch++) {
+            plots.accel.dataBuffers[ch].copyWithin(0, 1);
+            plots.accel.dataBuffers[ch][plots.accel.dataBuffers[ch].length - 1] = accelRawADCValues[ch];
+        }
     }
-    return value;
-  }
+    if (imuDataForPacket.gyro && plots.gyro) {
+        const gyroRawADCValues = [imuDataForPacket.gyro.x, imuDataForPacket.gyro.y, imuDataForPacket.gyro.z];
+        for (let ch = 0; ch < numGyroChannels; ch++) {
+            plots.gyro.dataBuffers[ch].copyWithin(0, 1);
+            plots.gyro.dataBuffers[ch][plots.gyro.dataBuffers[ch].length - 1] = gyroRawADCValues[ch];
+        }
+    }
+}
 
-  // Helper function to convert 4 bytes into an unsigned 32-bit integer (big endian)
-  function typecastUint32BigEndian(bytes) {
-    // bytes[0]: MSB, bytes[3]: LSB (big endian)
-    return (bytes[0] << 24) | (bytes[1] << 16) | (bytes[2] << 8) | bytes[3];
+  function typecastInt24BigEndian(dataView, offset) {
+    let value = (dataView.getUint8(offset) << 16) | (dataView.getUint8(offset + 1) << 8) | dataView.getUint8(offset + 2);
+    if (value & 0x00800000) value |= 0xFF000000; return value;
   }
-
-  // Helper function to convert 4 bytes into an unsigned 32-bit integer (little endian)
-  function typecastUint32(bytes) {
-    // bytes[0]: LSB, bytes[3]: MSB (little endian)
-    return (bytes[3] << 24) | (bytes[2] << 16) | (bytes[1] << 8) | bytes[0];
-  }
-
-  // Function to convert recorded data to CSV
   function convertDataToCSV(data) {
-    // Create CSV header
-    let csvContent = 'Timestamp';
-
-    // Add EEG channel headers
-    for (let i = 0; i < numEEGChannels; i++) {
-      csvContent += `,EEG_Ch${i + 1}`;
-    }
-
-    // Add IMU headers
-    csvContent += ',Accel_X,Accel_Y,Accel_Z,Accel_Magnitude';
-    csvContent += ',Gyro_X,Gyro_Y,Gyro_Z';
-    csvContent += ',Temperature,DeviceStatus,DeviceTimestamp,PacketIndex,CommandTimestamp,IncomingCommand';
-    csvContent += '\n';
-
-    // Add data rows
-    data.forEach(entry => {
-      let row = `${entry.timestamp}`;
-      
-      // Add EEG samples
-      entry.eegSamples.forEach(value => {
-        row += `,${value}`;
-      });
-      
-      // Add IMU data
-      row += `,${entry.imuData.accel.x},${entry.imuData.accel.y},${entry.imuData.accel.z},${entry.imuData.accel.magnitude}`;
-      row += `,${entry.imuData.gyro.x},${entry.imuData.gyro.y},${entry.imuData.gyro.z}`;
-      row += `,${entry.imuData.temperature},${entry.imuData.deviceStatus},${entry.imuData.deviceTimestamp}`;
-      row += `,${entry.imuData.packetIndex},${entry.imuData.commandTimestamp},${entry.imuData.incomingCommand}`;
-      
-      csvContent += row + '\n';
-    });
-
-    return csvContent;
+    let csv = 'Timestamp';
+    for (let i=0; i<numEEGChannels; i++) csv += `,EEG_Ch${i+1}`;
+    csv += ',Accel_X,Accel_Y,Accel_Z,Accel_Magnitude,Gyro_X,Gyro_Y,Gyro_Z,Temperature,DeviceStatus,DeviceTimestamp,PacketIndex,CommandTimestamp,IncomingCommand\n';
+    data.forEach(e => {
+      let r = `${e.timestamp}`;
+      e.eegSamples.forEach(v => { r += `,${v!=null?v:''}`; });
+      if (e.imuData && e.imuData.accel) {
+        r += `,${e.imuData.accel.x!=null?e.imuData.accel.x:''},${e.imuData.accel.y!=null?e.imuData.accel.y:''},${e.imuData.accel.z!=null?e.imuData.accel.z:''},${e.imuData.accel.magnitude!=null?e.imuData.accel.magnitude:''}`;
+        r += `,${e.imuData.gyro.x!=null?e.imuData.gyro.x:''},${e.imuData.gyro.y!=null?e.imuData.gyro.y:''},${e.imuData.gyro.z!=null?e.imuData.gyro.z:''}`;
+        r += `,${e.imuData.temperature!=null?e.imuData.temperature:''},${e.imuData.deviceStatus!=null?e.imuData.deviceStatus:''},${e.imuData.deviceTimestamp!=null?e.imuData.deviceTimestamp:''}`;
+        r += `,${e.imuData.packetIndex!=null?e.imuData.packetIndex:''},${e.imuData.commandTimestamp!=null?e.imuData.commandTimestamp:''},${e.imuData.incomingCommand!=null?e.imuData.incomingCommand:''}`;
+      } else { r += ',,,,,,,,,,,,'; }
+      csv += r + '\n';
+    }); return csv;
   }
-
-  // Function to draw grid lines and labels
   function drawGrid(plot) {
-    if (!plot) return;
-    
-    // Clear the canvas
-    plot.labelCtx.clearRect(0, 0, plot.labelCanvas.width, plot.labelCanvas.height);
-
-    // Set styles
-    plot.labelCtx.strokeStyle = '#444'; // Grid line color
-    plot.labelCtx.lineWidth = 1;
-    plot.labelCtx.font = '12px Arial';
-    plot.labelCtx.fillStyle = '#fff'; // Text color
-
-    // Draw vertical lines every 1 second
-    const totalTime = numPoints / sps; // Total time in seconds
-    const pixelsPerSecond = plot.labelCanvas.width / totalTime;
-
-    for (let t = 0; t <= totalTime; t += 1) {
-      const x = ((totalTime - t) / totalTime) * plot.labelCanvas.width;
-      plot.labelCtx.beginPath();
-      plot.labelCtx.moveTo(x, 0);
-      plot.labelCtx.lineTo(x, plot.labelCanvas.height);
-      plot.labelCtx.stroke();
-
-      // Time labels every 2 seconds to avoid overlap
-      if (t % 2 === 0) {
-        plot.labelCtx.fillText(`${t}s`, x + 2, plot.labelCanvas.height - 2);
-      }
+    if (!plot || !plot.labelCtx || !plot.labelCanvas) return;
+    plot.labelCtx.clearRect(0,0,plot.labelCanvas.width,plot.labelCanvas.height);
+    plot.labelCtx.strokeStyle='#444'; plot.labelCtx.lineWidth=0.5; plot.labelCtx.font='10px Arial'; plot.labelCtx.fillStyle='#ccc';
+    const totalTimeVisible = plot.numDataPoints/plot.spsRate;
+    for (let t=0; t<=totalTimeVisible; t+=1) {
+      const x = (t/totalTimeVisible)*plot.labelCanvas.width;
+      plot.labelCtx.beginPath(); plot.labelCtx.moveTo(x,0); plot.labelCtx.lineTo(x,plot.labelCanvas.height); plot.labelCtx.stroke();
+      if (t%2===0 && t<totalTimeVisible) plot.labelCtx.fillText(`${totalTimeVisible-t}s`,x+2,plot.labelCanvas.height-5);
     }
-
-    // Draw y-axis labels for each channel with FIXED baseline positions
-    const verticalMargin = 0.1;
-    const verticalRange = 2 - 2 * verticalMargin;
-    
-    for (let i = 0; i < plot.numChannels; i++) {
-      // Fixed baseline positions - same as in display functions
-      const offsetY = ((plot.numChannels - i - 0.5) / plot.numChannels) * verticalRange - (verticalRange / 2);
-      const y = ((-offsetY + verticalRange / 2) / verticalRange) * plot.labelCanvas.height;
-
-      // Draw horizontal line at center of each channel (baseline)
-      plot.labelCtx.strokeStyle = '#666';
-      plot.labelCtx.beginPath();
-      plot.labelCtx.moveTo(0, y);
-      plot.labelCtx.lineTo(plot.labelCanvas.width, y);
-      plot.labelCtx.stroke();
-
-      // Draw y-axis labels showing the FULL scale range
-      plot.labelCtx.fillStyle = '#fff';
-      let yLabel;
-      
-      if (plot.type === 'EEG') {
-        // Show the full range that can be displayed around the baseline
-        const fullRangeµV = plot.yRange * 1e6; // Convert to µV
-        yLabel = `Ch${i + 1} ±${(fullRangeµV).toFixed(0)}µV`;
-      } else if (plot.type === 'Accel') {
-        const labels = ['X', 'Y', 'Z', 'Mag'];
-        const fullRange = plot.yRange;
-        yLabel = `${labels[i]} ±${(fullRange).toFixed(0)}`;
-      } else if (plot.type === 'Gyro') {
-        const labels = ['X', 'Y', 'Z'];
-        const fullRange = plot.yRange;
-        yLabel = `${labels[i]} ±${(fullRange).toFixed(0)}`;
-      }
-      
-      plot.labelCtx.fillText(yLabel, 2, y - 5);
+    if (totalTimeVisible>0) plot.labelCtx.fillText(`0s`,plot.labelCanvas.width-15,plot.labelCanvas.height-5);
+    const verticalMargin=0.05, totalPlotHeightNorm=2.0-2.0*verticalMargin, spacePerChannelNorm=totalPlotHeightNorm/plot.numChannels;
+    for (let i=0; i<plot.numChannels; i++) {
+      const topOfChannelNorm=(1.0-verticalMargin)-(i*spacePerChannelNorm), baseLineNorm=topOfChannelNorm-(spacePerChannelNorm/2.0);
+      const baseLinePixelY=((1-baseLineNorm)/2)*plot.labelCanvas.height;
+      plot.labelCtx.strokeStyle='#555'; plot.labelCtx.lineWidth=1;
+      plot.labelCtx.beginPath(); plot.labelCtx.moveTo(0,baseLinePixelY); plot.labelCtx.lineTo(plot.labelCanvas.width,baseLinePixelY); plot.labelCtx.stroke();
+      plot.labelCtx.strokeStyle='#333'; plot.labelCtx.lineWidth=0.5;
+      const halfDivisionNorm=spacePerChannelNorm/2;
+      const upperDivisionPixelY=((1-(baseLineNorm+halfDivisionNorm))/2)*plot.labelCanvas.height;
+      const lowerDivisionPixelY=((1-(baseLineNorm-halfDivisionNorm))/2)*plot.labelCanvas.height;
+      plot.labelCtx.beginPath(); plot.labelCtx.moveTo(0,upperDivisionPixelY); plot.labelCtx.lineTo(plot.labelCanvas.width,upperDivisionPixelY); plot.labelCtx.stroke();
+      plot.labelCtx.beginPath(); plot.labelCtx.moveTo(0,lowerDivisionPixelY); plot.labelCtx.lineTo(plot.labelCanvas.width,lowerDivisionPixelY); plot.labelCtx.stroke();
+      plot.labelCtx.fillStyle='#ddd'; let yLabelText; const scaleValue=plot.yScale;
+      if (plot.type==='EEG') yLabelText=`Ch${i+1} (±${scaleValue.toFixed(0)}µV)`;
+      else if (plot.type==='Accel') yLabelText=`${['X','Y','Z','Mag'][i]} (±${scaleValue.toFixed(0)} raw ADC)`; 
+      else if (plot.type==='Gyro') yLabelText=`${['X','Y','Z'][i]} (±${scaleValue.toFixed(0)} raw ADC)`;   
+      plot.labelCtx.fillText(yLabelText,5,baseLinePixelY-3);
     }
   }
 
-  // Event listeners
-  connectButton.addEventListener('click', () => {
-    console.log('Connect button clicked');
-    connectBLE();
-  });
-
-  disconnectButton.addEventListener('click', () => {
-    console.log('Disconnect button clicked');
-    disconnectBLE();
-  });
-
+  connectButton.addEventListener('click', connectBLE);
+  disconnectButton.addEventListener('click', disconnectBLE);
   downloadButton.addEventListener('click', () => {
-    console.log('Download button clicked');
-    if (recordedData.length > 0) {
-      const csvContent = convertDataToCSV(recordedData);
-      const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
-      const url = URL.createObjectURL(blob);
-      const downloadLink = document.createElement('a');
-      downloadLink.href = url;
-      downloadLink.setAttribute('download', `eeg_imu_data_${new Date().toISOString()}.csv`);
-      downloadLink.click();
-      URL.revokeObjectURL(url);
-      recordedData = [];
-      downloadButton.disabled = true;
-    } else {
-      alert('No data available to download.');
+    if(recordedData.length>0){
+      const csv=convertDataToCSV(recordedData); const blob=new Blob([csv],{type:'text/csv;charset=utf-8;'});
+      const url=URL.createObjectURL(blob); const link=document.createElement('a'); link.href=url;
+      link.setAttribute('download',`ble_data_${new Date().toISOString().replace(/[:.]/g,'-')}.csv`);
+      document.body.appendChild(link); link.click(); document.body.removeChild(link); URL.revokeObjectURL(url); log('Data downloaded.');
+    } else { alert('No data to download.'); }
+  });
+  loadDataButton.addEventListener('click', () => fileInput.click());
+  fileInput.addEventListener('change', (e) => { const f=e.target.files[0]; if(f){log(`Loading: ${f.name}`);loadCSVData(f);} e.target.value=null; });
+  
+  if(prevPageButton) prevPageButton.addEventListener('click',()=>navigateData(-displayDurationSeconds));
+  if(prevSecButton) prevSecButton.addEventListener('click',()=>navigateData(-1));
+  if(nextSecButton) nextSecButton.addEventListener('click',()=>navigateData(1));
+  if(nextPageButton) nextPageButton.addEventListener('click',()=>navigateData(displayDurationSeconds));
+  if(backToLiveButton) backToLiveButton.addEventListener('click',switchToLiveMode);
+
+  [notchFilterCheckbox, notchBandwidthInput, bandpassFilterCheckbox, bandpassLowerInput, bandpassUpperInput, dcBlockerCheckbox].forEach(el => {
+    if (el) el.addEventListener('change', updateFilterSettings); 
+  });
+  
+  document.addEventListener('keydown', (e) => {
+    if(!isPlaybackMode||!loadedData)return;
+    switch(e.key){
+      case 'ArrowLeft': navigateData(e.shiftKey?-displayDurationSeconds:-1); e.preventDefault(); break;
+      case 'ArrowRight': navigateData(e.shiftKey?displayDurationSeconds:1); e.preventDefault(); break;
     }
   });
-
-  loadDataButton.addEventListener('click', () => {
-    console.log('Load data button clicked');
-    fileInput.click();
-  });
-
-  fileInput.addEventListener('change', (event) => {
-    console.log('File input changed');
-    const file = event.target.files[0];
-    if (file) {
-      console.log('Loading file:', file.name);
-      loadCSVData(file);
-    }
-  });
-
-  // Navigation event listeners
-  if (prevPageButton) prevPageButton.addEventListener('click', () => navigateData(-15));
-  if (prevSecButton) prevSecButton.addEventListener('click', () => navigateData(-1));
-  if (nextSecButton) nextSecButton.addEventListener('click', () => navigateData(1));
-  if (nextPageButton) nextPageButton.addEventListener('click', () => navigateData(15));
-  if (backToLiveButton) backToLiveButton.addEventListener('click', () => switchToLiveMode());
-
-  // Event listeners for filter controls
-  notchFilterCheckbox.addEventListener('change', updateFilterSettings);
-  notchBandwidthInput.addEventListener('change', updateFilterSettings);
-  bandpassFilterCheckbox.addEventListener('change', updateFilterSettings);
-  bandpassLowerInput.addEventListener('change', updateFilterSettings);
-  bandpassUpperInput.addEventListener('change', updateFilterSettings);
-
-  // Keyboard navigation
-  document.addEventListener('keydown', (event) => {
-    if (!isPlaybackMode) return;
-    
-    switch(event.key) {
-      case 'ArrowLeft':
-        navigateData(-15);
-        event.preventDefault();
-        break;
-      case 'ArrowRight':
-        navigateData(15);
-        event.preventDefault();
-        break;
-      case 'ArrowUp':
-        navigateData(-1);
-        event.preventDefault();
-        break;
-      case 'ArrowDown':
-        navigateData(1);
-        event.preventDefault();
-        break;
-    }
-  });
-
 });
