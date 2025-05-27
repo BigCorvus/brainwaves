@@ -267,8 +267,8 @@ document.addEventListener('DOMContentLoaded', () => {
   let runtimeIntervalId = null;
 
   let touchStartX = 0;
-  let touchStartY = 0; 
-  const swipeThreshold = 50; 
+  let touchStartY = 0;
+  const swipeThreshold = 50;
 
   const connectButton = document.getElementById('connectButton');
   const disconnectButton = document.getElementById('disconnectButton');
@@ -384,7 +384,7 @@ document.addEventListener('DOMContentLoaded', () => {
                 valueToPlot = valueToPlot * ( (spacePerChannel / 2) / plot.yScale );
             }
 
-            if (!isFinite(valueToPlot)) { 
+            if (!isFinite(valueToPlot)) {
                 valueToPlot = 0;
             }
             line.setY(j, baseLineY + valueToPlot);
@@ -409,30 +409,42 @@ document.addEventListener('DOMContentLoaded', () => {
             }
         }
 
+        // This is the index of the first *unique* sample (at plot.spsRate) to be displayed in the window
         const windowStartSampleIndex = Math.round(currentPlaybackTimeSeconds * plot.spsRate);
 
-        for (let i = 0; i < plot.numChannels; i++) { 
+        for (let i = 0; i < plot.numChannels; i++) { // Loop for channels (e.g., X, Y, Z for IMU)
           const line = plot.lines[i];
           const topOfChannelArea = (1.0 - verticalMargin) - (i * spacePerChannel);
           const baseLineY = topOfChannelArea - (spacePerChannel / 2.0);
 
-          for (let j = 0; j < plot.numDataPoints; j++) { 
+          for (let j = 0; j < plot.numDataPoints; j++) { // Loop for points on the screen for this channel
             let rawValue = 0;
-            const dataIndex = windowStartSampleIndex + j;
+            // dataIndexForUniqueSample is the k-th unique sample we want for the j-th point on screen
+            const dataIndexForUniqueSample = windowStartSampleIndex + j;
 
             if (plot.type === 'EEG') {
+                const dataIndex = dataIndexForUniqueSample; // EEG data is already at eegSps in loadedData.eeg
                 if (loadedData.eeg && dataIndex >= 0 && dataIndex < loadedData.eeg.length) {
                     const eegDataPoint = loadedData.eeg[dataIndex];
                     if (eegDataPoint && i < eegDataPoint.length) rawValue = eegDataPoint[i];
                 }
             } else if (plot.type === 'Accel') {
-                if (loadedData.accel && dataIndex >= 0 && dataIndex < loadedData.accel.length) {
-                    const accelDataPoint = loadedData.accel[dataIndex];
+                // IMU data in loadedData.accel is upsampled to eegSps.
+                // plot.spsRate for Accel is imuSps.
+                // We need to convert dataIndexForUniqueSample (which is at imuSps) to an index for the eegSps array.
+                const samplingRatio = eegSps / plot.spsRate; // e.g., 250 / 50 = 5
+                const actualReadIndex = Math.floor(dataIndexForUniqueSample * samplingRatio);
+
+                if (loadedData.accel && actualReadIndex >= 0 && actualReadIndex < loadedData.accel.length) {
+                    const accelDataPoint = loadedData.accel[actualReadIndex];
                     if (accelDataPoint && i < accelDataPoint.length) rawValue = accelDataPoint[i];
                 }
             } else if (plot.type === 'Gyro') {
-                 if (loadedData.gyro && dataIndex >= 0 && dataIndex < loadedData.gyro.length) {
-                    const gyroDataPoint = loadedData.gyro[dataIndex];
+                const samplingRatio = eegSps / plot.spsRate; // e.g., 250 / 50 = 5
+                const actualReadIndex = Math.floor(dataIndexForUniqueSample * samplingRatio);
+
+                 if (loadedData.gyro && actualReadIndex >= 0 && actualReadIndex < loadedData.gyro.length) {
+                    const gyroDataPoint = loadedData.gyro[actualReadIndex];
                     if (gyroDataPoint && i < gyroDataPoint.length) rawValue = gyroDataPoint[i];
                 }
             }
@@ -445,7 +457,7 @@ document.addEventListener('DOMContentLoaded', () => {
                 valueToPlot = rawValue * ( (spacePerChannel / 2) / plot.yScale );
             }
 
-            if (!isFinite(valueToPlot)) { 
+            if (!isFinite(valueToPlot)) {
                 valueToPlot = 0;
             }
             line.setY(j, baseLineY + valueToPlot);
@@ -506,7 +518,7 @@ document.addEventListener('DOMContentLoaded', () => {
         const eegSamplesForRow = eegColIndices.map(idx => {
             const valStr = values[idx];
             const numVal = parseFloat(valStr);
-            return isFinite(numVal) ? numVal : 0; 
+            return isFinite(numVal) ? numVal : 0;
         });
         parsedEEG.push(eegSamplesForRow);
 
@@ -529,17 +541,17 @@ document.addEventListener('DOMContentLoaded', () => {
             });
             parsedGyro.push(gyroSamplesForRow);
         } else {
-            parsedGyro.push(new Array(numGyroChannels).fill(0)); 
+            parsedGyro.push(new Array(numGyroChannels).fill(0));
         }
       }
       if (parsedEEG.length === 0) { alert('No valid EEG data found in CSV file.'); return; }
-      
+
       while(parsedAccel.length < parsedEEG.length) parsedAccel.push(new Array(numAccelChannels).fill(0));
       while(parsedGyro.length < parsedEEG.length) parsedGyro.push(new Array(numGyroChannels).fill(0));
 
       loadedData = {
         eeg: parsedEEG,
-        accel: parsedAccel.slice(0, parsedEEG.length),
+        accel: parsedAccel.slice(0, parsedEEG.length), // Ensure accel/gyro have same length as EEG
         gyro: parsedGyro.slice(0, parsedEEG.length)
        };
 
@@ -550,7 +562,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
       Object.values(plots).forEach(plot => { if (plot) plot.playbackViewInvalidated = true; });
       switchToPlaybackMode();
-      updatePlaybackDisplay(); 
+      updatePlaybackDisplay();
       log(`Loaded CSV: ${parsedEEG.length} EEG samples. Playback duration: ~${maxPlaybackTimeSeconds.toFixed(1)}s. Initial view starts at: ${currentPlaybackTimeSeconds.toFixed(1)}s`);
     } catch (error) { console.error('Error loading CSV:', error); alert('Error loading CSV file: ' + error.message); loadedData = null; }
   }
@@ -743,7 +755,7 @@ document.addEventListener('DOMContentLoaded', () => {
         const currentEegForRecording = eegRawValuesThisSample.slice(1, numEEGChannels + 1);
         recordedData.push({
             timestamp: new Date(timestamp.getTime() + (sampleIdx * (1000/eegSps))).toISOString(),
-            eegSamples: currentEegForRecording, imuData: imuDataForPacket
+            eegSamples: currentEegForRecording, imuData: imuDataForPacket // IMU data is the same for all 5 EEG samples in this packet
         });
         if (plots.eeg) {
             for (let ch = 0; ch < numEEGChannels; ch++) {
@@ -862,7 +874,7 @@ document.addEventListener('DOMContentLoaded', () => {
       if (!isPlaybackMode || !loadedData) return;
       touchStartX = e.touches[0].clientX;
       touchStartY = e.touches[0].clientY;
-    }, { passive: true }); 
+    }, { passive: true });
 
     container.addEventListener('touchmove', (e) => {
       if (!isPlaybackMode || !loadedData || !touchStartX || !touchStartY) return;
@@ -871,10 +883,10 @@ document.addEventListener('DOMContentLoaded', () => {
       const deltaX = Math.abs(touchCurrentX - touchStartX);
       const deltaY = Math.abs(touchCurrentY - touchStartY);
 
-      if (deltaX > deltaY && deltaX > 10) { 
+      if (deltaX > deltaY && deltaX > 10) {
         e.preventDefault();
       }
-    }, { passive: false }); 
+    }, { passive: false });
 
     container.addEventListener('touchend', (e) => {
       if (!isPlaybackMode || !loadedData || touchStartX === 0) return;
