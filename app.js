@@ -270,12 +270,21 @@ document.addEventListener('DOMContentLoaded', () => {
   let touchStartY = 0;
   const swipeThreshold = 50;
 
+  // Variables for new features
+  let batteryLevelCharacteristic = null;
+  let batteryReadIntervalId = null;
+  let lastNotificationTime = 0;
+  let notificationIntervals = []; // Stores recent interval durations
+  let notificationTimestamps = []; // Stores timestamps of notifications
+  let averageIntervalUpdateId = null; // ID for the interval that updates the average display
+
+
   const connectButton = document.getElementById('connectButton');
   const disconnectButton = document.getElementById('disconnectButton');
   const downloadButton = document.getElementById('downloadButton');
   const loadDataButton = document.getElementById('loadDataButton');
   const fileInput = document.getElementById('fileInput');
-  const fullscreenButton = document.getElementById('fullscreenButton'); // Get fullscreen button
+  const fullscreenButton = document.getElementById('fullscreenButton');
   const navigationControls = document.getElementById('navigationControls');
   const prevPageButton = document.getElementById('prevPageButton');
   const prevSecButton = document.getElementById('prevSecButton');
@@ -286,6 +295,10 @@ document.addEventListener('DOMContentLoaded', () => {
   const connectionStatus = document.getElementById('connectionStatus');
   const logOutput = document.getElementById('logOutput');
   const runtimeClockElement = document.getElementById('runtimeClock');
+
+  const batteryLevelDisplay = document.getElementById('batteryLevelDisplay');
+  const notificationIntervalDisplay = document.getElementById('notificationIntervalDisplay');
+
 
   const notchFilterCheckbox = document.getElementById('notchFilterCheckbox');
   const notchBandwidthInput = document.getElementById('notchBandwidthInput');
@@ -354,7 +367,6 @@ document.addEventListener('DOMContentLoaded', () => {
         if (isPlaybackMode) plot.playbackViewInvalidated = true;
       }
     });
-    // Update fullscreen button text on resize (e.g. if user exits FS with Esc)
     if (fullscreenButton) {
         if (document.fullscreenElement || document.webkitFullscreenElement || document.mozFullScreenElement || document.msFullscreenElement) {
             fullscreenButton.textContent = 'Exit Fullscreen';
@@ -409,40 +421,33 @@ document.addEventListener('DOMContentLoaded', () => {
             }
         }
 
-        // This is the index of the first *unique* sample (at plot.spsRate) to be displayed in the window
         const windowStartSampleIndex = Math.round(currentPlaybackTimeSeconds * plot.spsRate);
 
-        for (let i = 0; i < plot.numChannels; i++) { // Loop for channels (e.g., X, Y, Z for IMU)
+        for (let i = 0; i < plot.numChannels; i++) {
           const line = plot.lines[i];
           const topOfChannelArea = (1.0 - verticalMargin) - (i * spacePerChannel);
           const baseLineY = topOfChannelArea - (spacePerChannel / 2.0);
 
-          for (let j = 0; j < plot.numDataPoints; j++) { // Loop for points on the screen for this channel
+          for (let j = 0; j < plot.numDataPoints; j++) {
             let rawValue = 0;
-            // dataIndexForUniqueSample is the k-th unique sample we want for the j-th point on screen
             const dataIndexForUniqueSample = windowStartSampleIndex + j;
 
             if (plot.type === 'EEG') {
-                const dataIndex = dataIndexForUniqueSample; // EEG data is already at eegSps in loadedData.eeg
+                const dataIndex = dataIndexForUniqueSample;
                 if (loadedData.eeg && dataIndex >= 0 && dataIndex < loadedData.eeg.length) {
                     const eegDataPoint = loadedData.eeg[dataIndex];
                     if (eegDataPoint && i < eegDataPoint.length) rawValue = eegDataPoint[i];
                 }
             } else if (plot.type === 'Accel') {
-                // IMU data in loadedData.accel is upsampled to eegSps.
-                // plot.spsRate for Accel is imuSps.
-                // We need to convert dataIndexForUniqueSample (which is at imuSps) to an index for the eegSps array.
-                const samplingRatio = eegSps / plot.spsRate; // e.g., 250 / 50 = 5
+                const samplingRatio = eegSps / plot.spsRate;
                 const actualReadIndex = Math.floor(dataIndexForUniqueSample * samplingRatio);
-
                 if (loadedData.accel && actualReadIndex >= 0 && actualReadIndex < loadedData.accel.length) {
                     const accelDataPoint = loadedData.accel[actualReadIndex];
                     if (accelDataPoint && i < accelDataPoint.length) rawValue = accelDataPoint[i];
                 }
             } else if (plot.type === 'Gyro') {
-                const samplingRatio = eegSps / plot.spsRate; // e.g., 250 / 50 = 5
+                const samplingRatio = eegSps / plot.spsRate;
                 const actualReadIndex = Math.floor(dataIndexForUniqueSample * samplingRatio);
-
                  if (loadedData.gyro && actualReadIndex >= 0 && actualReadIndex < loadedData.gyro.length) {
                     const gyroDataPoint = loadedData.gyro[actualReadIndex];
                     if (gyroDataPoint && i < gyroDataPoint.length) rawValue = gyroDataPoint[i];
@@ -551,12 +556,11 @@ document.addEventListener('DOMContentLoaded', () => {
 
       loadedData = {
         eeg: parsedEEG,
-        accel: parsedAccel.slice(0, parsedEEG.length), // Ensure accel/gyro have same length as EEG
+        accel: parsedAccel.slice(0, parsedEEG.length),
         gyro: parsedGyro.slice(0, parsedEEG.length)
        };
 
       maxPlaybackTimeSeconds = (parsedEEG.length > 0 ? (parsedEEG.length -1) / eegSps : 0);
-
       const maxSeekPosInitial = Math.max(0, maxPlaybackTimeSeconds - displayDurationSeconds);
       currentPlaybackTimeSeconds = maxSeekPosInitial;
 
@@ -570,16 +574,12 @@ document.addEventListener('DOMContentLoaded', () => {
   function navigateData(deltaSeconds) {
     if (!isPlaybackMode || !loadedData) return;
     currentPlaybackTimeSeconds += deltaSeconds;
-
     const maxSeekPos = Math.max(0, maxPlaybackTimeSeconds - displayDurationSeconds);
     let minSeekPos = 0.0;
-
     if (maxPlaybackTimeSeconds > FORBIDDEN_START_SECONDS) {
       minSeekPos = FORBIDDEN_START_SECONDS;
     }
-
     currentPlaybackTimeSeconds = Math.max(minSeekPos, Math.min(currentPlaybackTimeSeconds, maxSeekPos));
-
     Object.values(plots).forEach(plot => { if (plot) plot.playbackViewInvalidated = true; });
     updatePlaybackDisplay();
   }
@@ -587,16 +587,39 @@ document.addEventListener('DOMContentLoaded', () => {
   function switchToPlaybackMode() {
     isPlaybackMode = true; navigationControls.style.display = 'block';
     connectButton.disabled = true; disconnectButton.disabled = true;
+    if (batteryReadIntervalId) clearInterval(batteryReadIntervalId); batteryReadIntervalId = null;
+    if (averageIntervalUpdateId) clearInterval(averageIntervalUpdateId); averageIntervalUpdateId = null;
+
 
     Object.values(plots).forEach(plot => { if (plot) plot.playbackViewInvalidated = true; });
     timeDisplay.textContent = `${currentPlaybackTimeSeconds.toFixed(1)}s / ${(maxPlaybackTimeSeconds > 0 ? maxPlaybackTimeSeconds : 0).toFixed(1)}s`;
     log('Switched to playback mode');
   }
+
   function switchToLiveMode() {
     isPlaybackMode = false; navigationControls.style.display = 'none';
     loadedData = null; currentPlaybackTimeSeconds = 0; maxPlaybackTimeSeconds = 0;
     connectButton.disabled = (bluetoothDevice && bluetoothDevice.gatt.connected);
     disconnectButton.disabled = !(bluetoothDevice && bluetoothDevice.gatt.connected);
+
+    lastNotificationTime = 0;
+    notificationIntervals = [];
+    notificationTimestamps = [];
+    if (notificationIntervalDisplay) notificationIntervalDisplay.textContent = 'N/A';
+    if (batteryLevelDisplay) batteryLevelDisplay.textContent = 'N/A';
+
+
+    if (bluetoothDevice && bluetoothDevice.gatt.connected) {
+        if (batteryLevelCharacteristic) {
+            readBatteryLevel();
+            if (batteryReadIntervalId) clearInterval(batteryReadIntervalId);
+            batteryReadIntervalId = setInterval(readBatteryLevel, 3000);
+        }
+        if (averageIntervalUpdateId) clearInterval(averageIntervalUpdateId);
+        averageIntervalUpdateId = setInterval(updateAverageIntervalDisplay, 1000);
+    }
+
+
     Object.values(plots).forEach(plot => {
         if (plot) {
             plot.dataBuffers.forEach(buffer => buffer.fill(0));
@@ -621,6 +644,21 @@ document.addEventListener('DOMContentLoaded', () => {
     }
   }
 
+  async function readBatteryLevel() {
+    if (!batteryLevelCharacteristic || !bluetoothDevice || !bluetoothDevice.gatt.connected) {
+        if(batteryLevelDisplay) batteryLevelDisplay.textContent = 'N/A';
+        return;
+    }
+    try {
+      const value = await batteryLevelCharacteristic.readValue();
+      const batteryLevel = value.getUint8(0);
+      if (batteryLevelDisplay) batteryLevelDisplay.textContent = `${batteryLevel}%`;
+    } catch (error) {
+      log('Error reading battery level: ' + error);
+      if (batteryLevelDisplay) batteryLevelDisplay.textContent = 'Error';
+    }
+  }
+
   function exponentialBackoff(maxRetries, delay, toTry, success, fail) {
     toTry().then(result => success(result))
     .catch(error => {
@@ -629,18 +667,23 @@ document.addEventListener('DOMContentLoaded', () => {
       setTimeout(() => exponentialBackoff(--maxRetries, delay*2, toTry, success, fail), delay*1000);
     });
   }
+
   async function connectBLE() {
     if (isConnecting || (bluetoothDevice && bluetoothDevice.gatt.connected)) return;
     try {
       if (!bluetoothDevice) {
         log('Requesting Bluetooth Device...'); updateConnectionStatus('Connecting');
         const EEG_SERVICE_UUID = '8badf00d-1212-efde-1523-785feabcd123';
-        bluetoothDevice = await navigator.bluetooth.requestDevice({ filters: [ { services: [EEG_SERVICE_UUID] } ] });
+        bluetoothDevice = await navigator.bluetooth.requestDevice({
+            filters: [ { services: [EEG_SERVICE_UUID] } ],
+            optionalServices: ['battery_service']
+        });
         bluetoothDevice.addEventListener('gattserverdisconnected', onDisconnected);
       }
       connectGatt();
     } catch (error) { log('Failed to request device: '+error); updateConnectionStatus('Disconnected'); isConnecting = false; }
   }
+
   function connectGatt() {
     isConnecting = true; updateConnectionStatus('Connecting');
     exponentialBackoff(3, 2,
@@ -655,17 +698,38 @@ document.addEventListener('DOMContentLoaded', () => {
           bleCharacteristic = await service.getCharacteristic(EEG_CHARACTERISTIC_UUID);
           await bleCharacteristic.startNotifications();
           bleCharacteristic.addEventListener('characteristicvaluechanged', handleCharacteristicValueChanged);
+
+          try {
+            log('Attempting to access Battery Service...');
+            const batteryService = await bleServer.getPrimaryService('battery_service');
+            batteryLevelCharacteristic = await batteryService.getCharacteristic('battery_level');
+            log('Battery Service and Characteristic found.');
+            await readBatteryLevel();
+            if (batteryReadIntervalId) clearInterval(batteryReadIntervalId);
+            batteryReadIntervalId = setInterval(readBatteryLevel, 3000);
+          } catch (batteryError) {
+            log('Battery Service not found or error accessing it: ' + batteryError);
+            if (batteryLevelDisplay) batteryLevelDisplay.textContent = 'N/A';
+            batteryLevelCharacteristic = null;
+          }
+
           connectButton.disabled = true; disconnectButton.disabled = false; downloadButton.disabled = true;
           updateConnectionStatus('Connected'); log(`Connected to ${bluetoothDevice.name||bluetoothDevice.id} and notifications started.`);
           recordedData = []; isConnecting = false;
           connectionStartTime = Date.now();
+          lastNotificationTime = 0;
+          notificationIntervals = [];
+          notificationTimestamps = [];
+          if (averageIntervalUpdateId) clearInterval(averageIntervalUpdateId); // Clear previous if any
+          averageIntervalUpdateId = setInterval(updateAverageIntervalDisplay, 1000); // Start averaging interval
+
           if (runtimeIntervalId) clearInterval(runtimeIntervalId);
           runtimeIntervalId = setInterval(updateRuntimeClock, 1000);
           updateRuntimeClock();
         } catch (error) {
           log('Failed to setup service/characteristic: '+error);
           if (bleServer && bleServer.connected) bleServer.disconnect();
-          onDisconnected(false);
+          onDisconnected();
         }
       },
       (error) => {
@@ -674,25 +738,90 @@ document.addEventListener('DOMContentLoaded', () => {
       }
     );
   }
-  function onDisconnected(attemptReconnect = true) {
+
+  function onDisconnected() {
     log(`Bluetooth Device ${bluetoothDevice?(bluetoothDevice.name||bluetoothDevice.id):''} disconnected.`);
     updateConnectionStatus('Disconnected'); connectButton.disabled = false; disconnectButton.disabled = true;
     downloadButton.disabled = recordedData.length === 0;
+
     if (bleCharacteristic) { bleCharacteristic.removeEventListener('characteristicvaluechanged', handleCharacteristicValueChanged); bleCharacteristic = null; }
     bleServer = null; isConnecting = false;
-    if (runtimeIntervalId) clearInterval(runtimeIntervalId);
-    runtimeIntervalId = null; connectionStartTime = null;
-    if (runtimeClockElement) runtimeClockElement.textContent = '';
+
+    if (runtimeIntervalId) clearInterval(runtimeIntervalId); runtimeIntervalId = null;
+    connectionStartTime = null; if (runtimeClockElement) runtimeClockElement.textContent = '';
+
+    if (batteryReadIntervalId) clearInterval(batteryReadIntervalId); batteryReadIntervalId = null;
+    batteryLevelCharacteristic = null;
+    if (batteryLevelDisplay) batteryLevelDisplay.textContent = 'N/A';
+
+    if (averageIntervalUpdateId) clearInterval(averageIntervalUpdateId); averageIntervalUpdateId = null;
+    if (notificationIntervalDisplay) notificationIntervalDisplay.textContent = 'N/A';
+    lastNotificationTime = 0;
+    notificationIntervals = [];
+    notificationTimestamps = [];
   }
+
   function disconnectBLE() {
     isConnecting = false;
     if (bluetoothDevice && bluetoothDevice.gatt.connected) { log(`Disconnecting from ${bluetoothDevice.name||bluetoothDevice.id}...`); bluetoothDevice.gatt.disconnect(); }
-    else { onDisconnected(false); }
+    else { onDisconnected(); }
   }
+
   function handleCharacteristicValueChanged(event) {
+    const now = performance.now();
+    if (lastNotificationTime > 0) {
+        const interval = now - lastNotificationTime;
+        notificationIntervals.push(interval);
+        notificationTimestamps.push(now);
+    }
+    lastNotificationTime = now;
+
+    // Keep only recent intervals (e.g., last 100, or clean up in updateAverageIntervalDisplay)
+    const maxIntervalsToKeep = 200; // Adjust as needed to balance memory and accuracy for 3s window
+    if (notificationIntervals.length > maxIntervalsToKeep) {
+        notificationIntervals.shift();
+        notificationTimestamps.shift();
+    }
+
     const dataView = event.target.value; processData(dataView);
     if (recordedData.length > 0 && downloadButton.disabled) downloadButton.disabled = false;
   }
+
+  function updateAverageIntervalDisplay() {
+    if (!bluetoothDevice || !bluetoothDevice.gatt.connected || !notificationIntervalDisplay) {
+        if (notificationIntervalDisplay) notificationIntervalDisplay.textContent = 'N/A';
+        return;
+    }
+
+    const now = performance.now();
+    const threeSecondsAgo = now - 3000; // 3 seconds window
+
+    // Filter intervals and timestamps to the last 3 seconds
+    const recentIntervals = [];
+    for (let i = 0; i < notificationTimestamps.length; i++) {
+        if (notificationTimestamps[i] >= threeSecondsAgo) {
+            recentIntervals.push(notificationIntervals[i]);
+        }
+    }
+
+    // Prune old entries from the main arrays (optional, but good for long-running sessions)
+    // This could also be done less frequently if performance is an issue
+    while(notificationTimestamps.length > 0 && notificationTimestamps[0] < threeSecondsAgo) {
+        notificationTimestamps.shift();
+        notificationIntervals.shift();
+    }
+
+
+    if (recentIntervals.length > 0) {
+        const sum = recentIntervals.reduce((acc, val) => acc + val, 0);
+        const averageInterval = sum / recentIntervals.length;
+        const averageFrequency = 1000 / averageInterval;
+        notificationIntervalDisplay.textContent = `${averageInterval.toFixed(1)} ms (${averageFrequency.toFixed(1)} Hz Avg)`;
+    } else {
+        notificationIntervalDisplay.textContent = 'Calculating...'; // Or 'N/A' if no data in 3s
+    }
+  }
+
 
   function updateFilterSettings() {
     const useNotch = notchFilterCheckbox ? notchFilterCheckbox.checked : false;
@@ -708,15 +837,10 @@ document.addEventListener('DOMContentLoaded', () => {
           filter.useNotch50 = useNotch;
           filter.useBandpass = useBandpass;
           filter.useDCBlock = useDCBlock;
-
           filter.notchBandwidth = notchBandwidth;
           filter.bandpassLower = bandpassLower;
           filter.bandpassUpper = bandpassUpper;
           filter.reset(plots.eeg.spsRate);
-        }
-        if (plots.eeg.filters.length > 0) {
-            const firstFilter = plots.eeg.filters[0];
-            log(`Filter settings: Notch=${firstFilter.useNotch50}, BP=${firstFilter.useBandpass}, DCBlock=${firstFilter.useDCBlock}, NotchBW=${firstFilter.notchBandwidth}, BP Range=${firstFilter.bandpassLower}-${firstFilter.bandpassUpper}Hz`);
         }
     }
     if (isPlaybackMode && plots.eeg) {
@@ -755,7 +879,7 @@ document.addEventListener('DOMContentLoaded', () => {
         const currentEegForRecording = eegRawValuesThisSample.slice(1, numEEGChannels + 1);
         recordedData.push({
             timestamp: new Date(timestamp.getTime() + (sampleIdx * (1000/eegSps))).toISOString(),
-            eegSamples: currentEegForRecording, imuData: imuDataForPacket // IMU data is the same for all 5 EEG samples in this packet
+            eegSamples: currentEegForRecording, imuData: imuDataForPacket
         });
         if (plots.eeg) {
             for (let ch = 0; ch < numEEGChannels; ch++) {
@@ -866,101 +990,52 @@ document.addEventListener('DOMContentLoaded', () => {
     }
   });
 
-  // --- SWIPE GESTURE IMPLEMENTATION ---
   const canvasContainers = document.querySelectorAll('.canvas-container');
-
   canvasContainers.forEach(container => {
     container.addEventListener('touchstart', (e) => {
       if (!isPlaybackMode || !loadedData) return;
       touchStartX = e.touches[0].clientX;
       touchStartY = e.touches[0].clientY;
     }, { passive: true });
-
     container.addEventListener('touchmove', (e) => {
       if (!isPlaybackMode || !loadedData || !touchStartX || !touchStartY) return;
       const touchCurrentX = e.touches[0].clientX;
       const touchCurrentY = e.touches[0].clientY;
       const deltaX = Math.abs(touchCurrentX - touchStartX);
       const deltaY = Math.abs(touchCurrentY - touchStartY);
-
-      if (deltaX > deltaY && deltaX > 10) {
-        e.preventDefault();
-      }
+      if (deltaX > deltaY && deltaX > 10) { e.preventDefault(); }
     }, { passive: false });
-
     container.addEventListener('touchend', (e) => {
       if (!isPlaybackMode || !loadedData || touchStartX === 0) return;
       const touchEndX = e.changedTouches[0].clientX;
       const swipeDistance = touchEndX - touchStartX;
-
       if (Math.abs(swipeDistance) > swipeThreshold) {
-        if (swipeDistance < 0) {
-          log('Swipe Left detected - Next Page');
-          navigateData(displayDurationSeconds);
-        } else {
-          log('Swipe Right detected - Previous Page');
-          navigateData(-displayDurationSeconds);
-        }
+        if (swipeDistance < 0) { log('Swipe Left detected - Next Page'); navigateData(displayDurationSeconds); }
+        else { log('Swipe Right detected - Previous Page'); navigateData(-displayDurationSeconds); }
       }
-      touchStartX = 0;
-      touchStartY = 0;
+      touchStartX = 0; touchStartY = 0;
     });
   });
-  // --- END SWIPE GESTURE IMPLEMENTATION ---
 
-  // --- FULLSCREEN FUNCTIONALITY ---
   function toggleFullScreen() {
-    const elem = document.documentElement; // Fullscreen the whole page
+    const elem = document.documentElement;
     if (!document.fullscreenElement && !document.mozFullScreenElement && !document.webkitFullscreenElement && !document.msFullscreenElement) {
-      if (elem.requestFullscreen) {
-        elem.requestFullscreen();
-      } else if (elem.msRequestFullscreen) {
-        elem.msRequestFullscreen();
-      } else if (elem.mozRequestFullScreen) {
-        elem.mozRequestFullScreen();
-      } else if (elem.webkitRequestFullscreen) {
-        elem.webkitRequestFullscreen(Element.ALLOW_KEYBOARD_INPUT);
-      }
+      if (elem.requestFullscreen) { elem.requestFullscreen(); }
+      else if (elem.msRequestFullscreen) { elem.msRequestFullscreen(); }
+      else if (elem.mozRequestFullScreen) { elem.mozRequestFullScreen(); }
+      else if (elem.webkitRequestFullscreen) { elem.webkitRequestFullscreen(Element.ALLOW_KEYBOARD_INPUT); }
       if(fullscreenButton) fullscreenButton.textContent = 'Exit Fullscreen';
     } else {
-      if (document.exitFullscreen) {
-        document.exitFullscreen();
-      } else if (document.msExitFullscreen) {
-        document.msExitFullscreen();
-      } else if (document.mozCancelFullScreen) {
-        document.mozCancelFullScreen();
-      } else if (document.webkitExitFullscreen) {
-        document.webkitExitFullscreen();
-      }
+      if (document.exitFullscreen) { document.exitFullscreen(); }
+      else if (document.msExitFullscreen) { document.msExitFullscreen(); }
+      else if (document.mozCancelFullScreen) { document.mozCancelFullScreen(); }
+      else if (document.webkitExitFullscreen) { document.webkitExitFullscreen(); }
       if(fullscreenButton) fullscreenButton.textContent = 'Fullscreen';
     }
   }
-
-  if (fullscreenButton) {
-    fullscreenButton.addEventListener('click', toggleFullScreen);
-  }
-
-  // Listen for fullscreen changes (e.g., user pressing Esc) to update button text
-  document.addEventListener('fullscreenchange', () => {
-    if (fullscreenButton) {
-        fullscreenButton.textContent = document.fullscreenElement ? 'Exit Fullscreen' : 'Fullscreen';
-    }
-  });
-  document.addEventListener('webkitfullscreenchange', () => {
-    if (fullscreenButton) {
-        fullscreenButton.textContent = document.webkitIsFullScreen ? 'Exit Fullscreen' : 'Fullscreen';
-    }
-  });
-  document.addEventListener('mozfullscreenchange', () => {
-    if (fullscreenButton) {
-        fullscreenButton.textContent = document.mozFullScreenElement ? 'Exit Fullscreen' : 'Fullscreen';
-    }
-  });
-  document.addEventListener('MSFullscreenChange', () => {
-    if (fullscreenButton) {
-        fullscreenButton.textContent = document.msFullscreenElement ? 'Exit Fullscreen' : 'Fullscreen';
-    }
-  });
-  // --- END FULLSCREEN FUNCTIONALITY ---
-
+  if (fullscreenButton) { fullscreenButton.addEventListener('click', toggleFullScreen); }
+  document.addEventListener('fullscreenchange', () => { if (fullscreenButton) { fullscreenButton.textContent = document.fullscreenElement ? 'Exit Fullscreen' : 'Fullscreen'; } });
+  document.addEventListener('webkitfullscreenchange', () => { if (fullscreenButton) { fullscreenButton.textContent = document.webkitIsFullScreen ? 'Exit Fullscreen' : 'Fullscreen'; } });
+  document.addEventListener('mozfullscreenchange', () => { if (fullscreenButton) { fullscreenButton.textContent = document.mozFullScreenElement ? 'Exit Fullscreen' : 'Fullscreen'; } });
+  document.addEventListener('MSFullscreenChange', () => { if (fullscreenButton) { fullscreenButton.textContent = document.msFullscreenElement ? 'Exit Fullscreen' : 'Fullscreen'; } });
 });
